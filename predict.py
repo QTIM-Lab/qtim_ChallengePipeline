@@ -14,7 +14,7 @@ from functools import partial
 
 from joblib import Parallel, delayed
 
-def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetitions=16, test_batch_size=200, output_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
+def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetitions=16, test_batch_size=200, ground_truth_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
 
     """ TODO: Make work for multiple inputs and outputs.
         TODO: Interact with data group interface
@@ -46,14 +46,14 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
 
     total_case_num = data_list.shape[0]
 
-    if output_data_label is not None:
-        truth_list = getattr(data_file.root, output_data_label)
+    if ground_truth_data_label is not None:
+        truth_list = getattr(data_file.root, ground_truth_data_label)
 
     for case_idx in xrange(total_case_num):
 
         print 'Working on image.. ', case_idx, 'in', total_case_num
 
-        # Filename for output predictions.
+        # Filename for output predictions. TODO: Make a more informative output for output_name == None
         if output_name == None:
             case_output_name = 'TESTCASE_' + str(case_idx).zfill(3) + '_PREDICT'
         else:
@@ -64,7 +64,6 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
             output_filepath = os.path.join(output_directory, case_output_name + '.nii.gz')
         else:
             case_directory = casename_list[case_idx]
-            # case_directory = np.array_str(np.squeeze(getattr(data_file.root, '_'.join([input_data_label + '_casenames']))[case_idx]))
             output_filepath = os.path.join(case_directory, case_output_name + '.nii.gz')
             print os.path.basename(case_directory)
 
@@ -77,27 +76,34 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
         case_affine = affine_list[case_idx]
 
         # Get groundtruth if provided.
-        if output_data_label is not None:
-            case_output = np.asarray([truth_list[case_idx]])
+        if ground_truth_data_label is not None:
+            case_groundtruth_data = np.asarray([truth_list[case_idx]])
+        else:
+            case_groundtruth_data = None
 
         # Get the shape of the output either from input data, groundtruth, or pre-specification.
-        if output_data_label is None and output_shape is None:
+        if ground_truth_data_label is None and output_shape is None:
             output_shape = list(final_image.shape)
             output_shape[1] = 1
             output_shape = tuple(output_shape)
-        elif output_data_label is None:
+        elif ground_truth_data_label is None:
             pass
         else:
-            output_shape = case_output.shape
+            output_shape = case_groundtruth_data.shape
 
-        predict_patches_one_image(case_input_data)
+        output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
+
+        save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
 
     data_file.close()
 
-def predict_patches_one_image(input_data, patch_shape, model, output_shape=None, repetitions=1, binarize_probability=.5, ground_truth=None, stack_outputs=False):
+def predict_patches_one_image(input_data, patch_shape, model, output_shape, repetitions=1, model_batch_size=1):
 
     """ Presumes data is in the format (batch_size, channels, dims)
     """
+
+    # Should we automatically determine output_shape?
+    output_data = np.zeros(output_shape)
 
     repetition_offsets = np.linspace(0, 15, repetitions, dtype=int)
     for rep_idx in xrange(repetitions):
@@ -108,10 +114,10 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape=None,
         repatched_image = np.zeros_like(output_data[offset_slice])
         corners_list = patchify_image(input_data[offset_slice], [input_data[offset_slice].shape[1]] + list(patch_shape))
 
-        for corner_list_idx in xrange(0, len(corners_list), test_batch_size):
+        for corner_list_idx in xrange(0, len(corners_list), model_batch_size):
 
-            corner_batch = corners_list[corner_list_idx:corner_list_idx+test_batch_size]
-            input_patches = grab_patch(input_data[offset_slice], corners_list[corner_list_idx:corner_list_idx+test_batch_size], patch_shape)
+            corner_batch = corners_list[corner_list_idx:corner_list_idx+model_batch_size]
+            input_patches = grab_patch(input_data[offset_slice], corners_list[corner_list_idx:corner_list_idx+model_batch_size], patch_shape)
             prediction = model.predict(input_patches)
 
             for corner_idx, corner in enumerate(corner_batch):
@@ -122,15 +128,28 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape=None,
         else:
             # Running Average
             output_data[offset_slice] = output_data[offset_slice] + (1.0 / (rep_idx)) * (repatched_image - output_data[offset_slice])
-    
-    output_data = np.squeeze(output_data)
+
+    return output_data
+
+def save_prediction(input_data, output_filepath, input_affine=None, ground_truth=None, stack_outputs=False, binarize_probability=.5):
+
+    """ This is a function just for function's sake
+        TODO: Parse out the most logical division of prediction functions.
+    """
+
+    # If no affine, create identity affine.
+    if input_affine is None:
+        input_affine = np.eye(4)
+
+    output_shape = input_data.shape
+    input_data = np.squeeze(input_data)
 
     # If output modalities is one, just save the output.
     if output_shape[1] == 1:
-        binarized_output_data = threshold_binarize(threshold=binarize_probability, input_data=output_data)
+        binarized_output_data = threshold_binarize(threshold=binarize_probability, input_data=input_data)
         print 'SUM OF ALL PREDICTION VOXELS', np.sum(binarized_output_data)
-        save_numpy_2_nifti(output_data, reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-probability'))
-        save_numpy_2_nifti(binarized_output_data, reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
+        save_numpy_2_nifti(input_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-probability'))
+        save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
         if ground_truth is not None:
             print 'DICE COEFFICIENT', calculate_prediction_dice(binarized_output_data, np.squeeze(ground_truth))
     
@@ -138,19 +157,19 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape=None,
     # or output multiple volumes.
     else:
         if stack_outputs:
-            merge_image = threshold_binarize(threshold=binarize_probability, input_data=output_data[0,...])
+            merge_image = threshold_binarize(threshold=binarize_probability, input_data=input_data[0,...])
             print 'SUM OF ALL PREDICTION VOXELS, MODALITY 0', np.sum(merge_image)
             for modality_idx in xrange(1, output_shape[1]):
-                print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality_idx), np.sum(output_data[modality_idx,...])
-                merge_image[threshold_binarize(threshold=binarize_probability, input_data=output_data[modality_idx,...]) == 1] = modality_idx
+                print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality_idx), np.sum(input_data[modality_idx,...])
+                merge_image[threshold_binarize(threshold=binarize_probability, input_data=input_data[modality_idx,...]) == 1] = modality_idx
 
-            save_numpy_2_nifti(threshold_binarize(threshold=binarize_probability, input_data=output_data[modality,...]), reference_affine=case_affine, output_filepath=output_filepath)
+            save_numpy_2_nifti(threshold_binarize(threshold=binarize_probability, input_data=input_data[modality,...]), reference_affine=input_affine, output_filepath=output_filepath)
     
         for modality in xrange(output_shape[1]):
-            print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality), np.sum(output_data[modality,...])
-            binarized_output_data = threshold_binarize(threshold=binarize_probability, input_data=output_data[modality,...])
-            save_numpy_2_nifti(output_data[modality,...], reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-probability'))
-            save_numpy_2_nifti(binarized_output_data, reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
+            print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality), np.sum(input_data[modality,...])
+            binarized_output_data = threshold_binarize(threshold=binarize_probability, input_data=input_data[modality,...])
+            save_numpy_2_nifti(input_data[modality,...], reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-probability'))
+            save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
 
     return
 

@@ -30,7 +30,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     # append_prefix_to_config(config, ["model_file"], 'downsample_')    
 
     # config['predictions_name'] = 'downsample_edema_prediction'
-    # config['predictions_replace_existing'] = True
+    config['predictions_replace_existing'] = True
     # config['overwrite_trainval_data'] = True
     
     # config['patch_shape'] = (24, 24, 4)
@@ -124,7 +124,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     # Run prediction step.
     if config['overwrite_prediction']:
         open_test_hdf5 = tables.open_file(config["hdf5_test"], "r")
-        model_predict_patches_hdf5(output_directory=config['predictions_folder'], output_name=config['predictions_name'], input_data_label=config['predictions_input'], output_data_label=config['predictions_groundtruth'], model=model, data_file=open_test_hdf5, patch_shape=config['patch_shape'], replace_existing=config['predictions_replace_existing'])
+        model_predict_patches_hdf5(output_directory=config['predictions_folder'], output_name=config['predictions_name'], input_data_label=config['predictions_input'], ground_truth_data_label=config['predictions_groundtruth'], model=model, data_file=open_test_hdf5, patch_shape=config['patch_shape'], replace_existing=config['predictions_replace_existing'])
 
     clear_session()
 

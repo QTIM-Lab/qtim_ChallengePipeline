@@ -12,40 +12,38 @@ from keras.callbacks import ModelCheckpoint, CSVLogger, Callback, LearningRateSc
 from keras.utils import plot_model
 from keras.backend import clear_session
 
-import config_files.BRATS_2017.edema_config as edema_config
-import config_files.BRATS_2017.tumor1_config as tumor1_config
-import config_files.BRATS_2017.tumor2_config as tumor2_config
-import config_files.BRATS_2017.nonenhancing1_config as nonenhancing1_config
-import config_files.BRATS_2017.nonenhancing2_config as nonenhancing2_config
-import config_files.BRATS_2017.reconciliation_config as reconciliation_config
-import config_files.BRATS_2017.isles_config as isles_config
+import config_files.isles_config as isles_config
 
 from model import n_net_3d, u_net_3d, split_u_net_3d, w_net_3d, load_old_model, vox_net, parellel_unet_3d
 from load_data import DataCollection
 from data_generator import get_data_generator
 from data_utils import pickle_dump, pickle_load
-from predict import model_predict_patches
+from predict import model_predict_patches_hdf5
 from augment import *
 from file_util import split_folder
 
 def learning_pipeline(overwrite=False, delete=False, config=None, parameters=None):
 
+    # Modifications to add in regardless of config file
+    ####################################################
     # append_prefix_to_config(config, ["hdf5_train", "hdf5_validation", "hdf5_test"], 'downsample_')
     # append_prefix_to_config(config, ["model_file"], 'downsample_')    
-    # config['predictions_name'] = 'downsample_edema_prediction'
-    config['patch_shape'] = (24, 24, 4)
-    config['training_patches_multiplier'] = 50
-    config['validation_patches_multiplier'] = 10
 
+    # config['predictions_name'] = 'downsample_edema_prediction'
+    # config['predictions_replace_existing'] = True
     # config['overwrite_trainval_data'] = True
-    # append_prefix_to_config(config, ["model_file"], 'downsize_4_regression_')
+    
+    # config['patch_shape'] = (24, 24, 4)
+    # config['training_patches_multiplier'] = 50
+    # config['validation_patches_multiplier'] = 10
+
     # config["downsize_filters_factor"] = 1
     # config["initial_learning_rate"] = 0.00001
     # config["regression"] = True
-    config['predictions_replace_existing'] = True
-    config["n_epochs"] = 200
-    config["batch_size"] = 1
-    config["image_shape"] = None
+    # config["n_epochs"] = 200
+    # config["batch_size"] = 1
+
+    # config["image_shape"] = None
 
     update_config(config=config, parameters=parameters)
     create_directories(delete=delete, config=config)
@@ -90,20 +88,11 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     else:
         model = split_u_net_3d(input_shape=(len(modality_dict['input_modalities']),) + config['patch_shape'], output_shape=(len(modality_dict['ground_truth']),) + config['patch_shape'], downsize_filters_factor=config['downsize_filters_factor'], initial_learning_rate=config['initial_learning_rate'], regression=config['regression'], num_outputs=(len(modality_dict['ground_truth'])))
 
-    plot_model(model, to_file='model4.png', show_shapes=True)
+    plot_model(model, to_file='model_image.png', show_shapes=True)
 
     # Create data generators and train the model.
     if config["overwrite_training"]:
         
-        # rotation_augmentation = Flip_Rotate_2D(config['patch_shape'], config['patch_extraction_conditions'])
-        # rotation_augmentation_group = AugmentationGroup({'input_modalities': rotation_augmentation, 'ground_truth': rotation_augmentation,}, multiplier=1)
-
-        # noise_augmentation = GaussianNoise(config['patch_shape'], config['patch_extraction_conditions'])
-        # copy_augmentation = Copy()
-        # noise_augmentation_group = AugmentationGroup({'input_modalities': patch_extraction_augmentation, 'ground_truth': copy_augmentation}, multiplier=1)
-        # noise_augmentation_group.append_augmentation(patch_augmentation_group)
-
-
         # Get training and validation generators, either split randomly from the training data or from separate hdf5 files.
         if os.path.exists(os.path.abspath(config["hdf5_validation"])):
             open_validation_hdf5 = tables.open_file(config["hdf5_validation"], "r")
@@ -130,13 +119,14 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
         testing_data_collection = DataCollection(config['test_dir'], modality_dict)
         testing_data_collection.fill_data_groups()
 
-        # testing_data_collection.write_data_to_file(output_filepath = config['hdf5_test'])
-        testing_data_collection.write_data_to_list()
+        testing_data_collection.write_data_to_file(output_filepath = config['hdf5_test'])
 
     # Run prediction step.
     if config['overwrite_prediction']:
         open_test_hdf5 = tables.open_file(config["hdf5_test"], "r")
-        model_predict_patches(output_directory=config['predictions_folder'], output_name=config['predictions_name'], input_data_label=config['predictions_input'], output_data_label=config['predictions_groundtruth'], model=model, data_file=open_test_hdf5, patch_shape=config['patch_shape'], output_shape=config['image_shape'], replace_existing=config['predictions_replace_existing'])
+        model_predict_patches_hdf5(output_directory=config['predictions_folder'], output_name=config['predictions_name'], input_data_label=config['predictions_input'], output_data_label=config['predictions_groundtruth'], model=model, data_file=open_test_hdf5, patch_shape=config['patch_shape'], replace_existing=config['predictions_replace_existing'])
+
+    clear_session()
 
 def create_directories(delete=False, config=None):
 
@@ -150,8 +140,6 @@ def create_directories(delete=False, config=None):
                 rmtree(directory)
             if not os.path.exists(directory):
                 os.makedirs(directory)
-
-    clear_session()
 
 def update_config(config, parameters):
 
@@ -199,9 +187,14 @@ def get_callbacks(model_file, initial_learning_rate, learning_rate_drop, learnin
 
 if __name__ == '__main__':
 
+    # ISLES CONFIGURATION OPTIONS
+
     # learning_pipeline(config=isles_config.default_config(), overwrite=False)
     # learning_pipeline(config=isles_config.train_config(), overwrite=False)
-    learning_pipeline(config=isles_config.test_config(), overwrite=False)
+    learning_pipeline(config=isles_config.predict_config(), overwrite=False)
+
+
+    # BRATS CONFIGURATION OPTIONS
 
     # learning_pipeline(config=edema_config.train_config(), overwrite=False)
     # learning_pipeline(config=edema_config.predict_config(), overwrite=False)
@@ -213,7 +206,6 @@ if __name__ == '__main__':
     # learning_pipeline(config=tumor2_config.test_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing2_config.train_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False)
-
 
     # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
     # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})

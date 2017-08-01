@@ -5,9 +5,6 @@ import nibabel as nib
 import numpy as np
 import tables
 
-# from .training import load_old_model
-# from .utils import pickle_load
-
 from model import load_old_model
 from image_utils import save_numpy_2_nifti, nifti_2_numpy
 from file_util import replace_suffix, nifti_splitext
@@ -17,7 +14,7 @@ from functools import partial
 
 from joblib import Parallel, delayed
 
-def model_predict_patches(data_file, input_data_label, patch_shape, repetitions=16, test_batch_size=200, output_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True, input_type="hdf5"):
+def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetitions=16, test_batch_size=200, output_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
 
     """ TODO: Make work for multiple inputs and outputs.
         TODO: Interact with data group interface
@@ -39,22 +36,18 @@ def model_predict_patches(data_file, input_data_label, patch_shape, repetitions=
     # input_data_label_object = self.data_groups[input_data_label_group]
 
     # Preallocate Data
-    if input_type == "hdf5":
-        data_list = getattr(data_file.root, input_data_label)
+    data_list = getattr(data_file.root, input_data_label)
 
-        casename_list = getattr(data_file.root, '_'.join([input_data_label + '_casenames']))
-        casename_list = [np.array_str(np.squeeze(x)) for x in casename_list]
+    casename_list = getattr(data_file.root, '_'.join([input_data_label + '_casenames']))
+    casename_list = [np.array_str(np.squeeze(x)) for x in casename_list]
 
-        affine_list = getattr(data_file.root, '_'.join([input_data_label + '_affines']))
-        affine_list = [np.squeeze(x) for x in affine_list]
+    affine_list = getattr(data_file.root, '_'.join([input_data_label + '_affines']))
+    affine_list = [np.squeeze(x) for x in affine_list]
 
-        total_case_num = data_list.shape[0]
+    total_case_num = data_list.shape[0]
 
-        if output_data_label is not None:
-            truth_list = getattr(data_file.root, output_data_label)
-
-    # if input_type == "d"
-    fd=dg
+    if output_data_label is not None:
+        truth_list = getattr(data_file.root, output_data_label)
 
     for case_idx in xrange(total_case_num):
 
@@ -80,7 +73,7 @@ def model_predict_patches(data_file, input_data_label, patch_shape, repetitions=
             continue
 
         # Get data from hdf5
-        case_input = np.asarray([data_list[case_idx]])
+        case_input_data = np.asarray([data_list[case_idx]])
         case_affine = affine_list[case_idx]
 
         # Get groundtruth if provided.
@@ -97,58 +90,7 @@ def model_predict_patches(data_file, input_data_label, patch_shape, repetitions=
         else:
             output_shape = case_output.shape
 
-        repetition_offsets = np.linspace(0, 15, repetitions, dtype=int)
-        for rep_idx in xrange(repetitions):
-
-            print 'PATCH GRID REPETITION # ..', rep_idx
-
-            offset_slice = [slice(None)]*2 + [slice(repetition_offsets[rep_idx], None, 1)] * (case_input.ndim - 2)
-            repatched_image = np.zeros_like(final_image[offset_slice])
-            corners_list = patchify_image(case_input[offset_slice], [case_input[offset_slice].shape[1]] + list(patch_shape))
-
-            for corner_list_idx in xrange(0, len(corners_list), test_batch_size):
-
-                corner_batch = corners_list[corner_list_idx:corner_list_idx+test_batch_size]
-                input_patches = grab_patch(case_input[offset_slice], corners_list[corner_list_idx:corner_list_idx+test_batch_size], patch_shape)
-                prediction = model.predict(input_patches)
-
-                for corner_idx, corner in enumerate(corner_batch):
-                    insert_patch(repatched_image, prediction[corner_idx, ...], corner)
-
-            if rep_idx == 0:
-                final_image = np.copy(repatched_image)
-            else:
-                final_image[offset_slice] = final_image[offset_slice] + (1.0 / (rep_idx)) * (repatched_image - final_image[offset_slice])
-        
-        final_image = np.squeeze(final_image)
-
-        if output_shape[1] == 1:
-            print 'SUM OF ALL PREDICTION VOXELS', np.sum(final_image)
-            save_numpy_2_nifti(final_image, reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-probability'))
-            save_numpy_2_nifti(threshold_binarize(threshold=0.5, input_data=final_image), reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
-            if output_data_label is not None:
-                print 'DICE COEFFICIENT', calculate_prediction_dice(threshold_binarize(threshold=0.5, input_data=final_image), np.squeeze(case_output))
-        else:
-        
-            if merge_labels:
-                merge_image = threshold_binarize(threshold=0.5, input_data=final_image[0,...])
-                print 'SUM OF ALL PREDICTION VOXELS, MODALITY 0', np.sum(merge_image)
-                for modality in xrange(1, output_shape[1]):
-                    print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality), np.sum(final_image[modality,...])
-                    merge_image[threshold_binarize(threshold=0.5, input_data=final_image[modality,...]) == 1] = modality
-                save_numpy_2_nifti(threshold_binarize(threshold=0.5, input_data=final_image[modality,...]), reference_affine=case_affine, output_filepath=output_filepath)
-        
-            for modality in xrange(output_shape[1]):
-                print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality), np.sum(final_image[modality,...])
-                save_numpy_2_nifti(final_image[modality,...], reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-probability'))
-                save_numpy_2_nifti(threshold_binarize(threshold=0.5, input_data=final_image[modality,...]), reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
-
-        # print 'Sum of output...', np.sum(final_image[0,...]), np.sum(final_image[1,...]), np.sum(final_image[2,...])
-
-        # Multi-label images. TODO: Standardize this.
-        # composite_final_image = final_image[0,...]
-        # composite_final_image[final_image[1,...] > 0] = 2
-        # composite_final_image[final_image[2,...] > 0] = 3
+        predict_patches_one_image(case_input_data)
 
     data_file.close()
 
@@ -201,13 +143,14 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape=None,
             for modality_idx in xrange(1, output_shape[1]):
                 print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality_idx), np.sum(output_data[modality_idx,...])
                 merge_image[threshold_binarize(threshold=binarize_probability, input_data=output_data[modality_idx,...]) == 1] = modality_idx
-                
+
             save_numpy_2_nifti(threshold_binarize(threshold=binarize_probability, input_data=output_data[modality,...]), reference_affine=case_affine, output_filepath=output_filepath)
     
         for modality in xrange(output_shape[1]):
             print 'SUM OF ALL PREDICTION VOXELS, MODALITY',str(modality), np.sum(output_data[modality,...])
+            binarized_output_data = threshold_binarize(threshold=binarize_probability, input_data=output_data[modality,...])
             save_numpy_2_nifti(output_data[modality,...], reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-probability'))
-            save_numpy_2_nifti(threshold_binarize(threshold=0.5, input_data=output_data[modality,...]), reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
+            save_numpy_2_nifti(binarized_output_data, reference_affine=case_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
 
     return
 

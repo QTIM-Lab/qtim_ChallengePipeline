@@ -1,3 +1,14 @@
+# Custom
+/dummy_data/*
+/model_files/*
+/hdf5_data/*
+/predictions/*
+/config_files/*
+/other/*
+*.pkl
+*.png
+*.log
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

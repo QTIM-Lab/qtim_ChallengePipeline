@@ -402,7 +402,7 @@ def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, poo
     else:
         act = Activation('sigmoid')(conv8)
         model = Model(inputs=inputs, outputs=act)
-        model.compile(optimizer=Nadam(lr=initial_learning_rate), loss=neg_dice_coef_loss, metrics=[neg_dice_coef])
+        model.compile(optimizer=Nadam(lr=initial_learning_rate), loss=dice_coef_loss, metrics=[dice_coef])
 
     return model
 

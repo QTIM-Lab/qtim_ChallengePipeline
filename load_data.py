@@ -12,7 +12,7 @@ from augment import *
 
 class DataCollection(object):
 
-    def __init__(self, data_directory, modality_dict, spreadsheet_dict=None, value_dict=None, case_list=None, augmentations=None):
+    def __init__(self, data_directory, modality_dict, spreadsheet_dict=None, value_dict=None, case_list=None, augmentations=None, brainmask_dir=None, roimask_dir=None):
 
         # Input vars
         self.data_directory = os.path.abspath(data_directory)
@@ -25,12 +25,14 @@ class DataCollection(object):
         self.augmentations = []
         self.cases = []
 
-        # Augmentations
-
         # Empty vars
         self.data_groups = {}
         self.data_shape = None
         self.data_shape_augment = None
+
+        # TEMPORARY
+        self.brainmask_dir = brainmask_dir
+        self.roimask_dir = roimask_dir
 
         # Data-Checking, e.g. duplicate data keys, data_shape
 
@@ -90,7 +92,7 @@ class DataCollection(object):
                 if len(modality_group_files) == len(self.modality_dict[modality_group]):
                     self.data_groups[modality_group].add_case(tuple(modality_group_files), os.path.abspath(subject_dir))
 
-    def write_data_to_file(self, output_filepath=None, data_groups=None):
+    def write_data_to_file(self, output_filepath=None, data_groups=None, save_masks=False):
 
         """ Interesting question: Should all passed data_groups be assumed to have equal size? Nothing about hdf5 requires that, but it makes things a lot easier to assume.
         """
@@ -103,17 +105,17 @@ class DataCollection(object):
 
         # Create Data File
         try:
-            hdf5_file = create_hdf5_file(output_filepath, data_groups, self)
+            hdf5_file = create_hdf5_file(output_filepath, data_groups, self, save_masks)
         except Exception as e:
             os.remove(output_filepath)
             raise e
 
         # Write data
-        self.write_image_data_to_storage(data_groups)
+        self.write_image_data_to_storage(data_groups, save_masks)
 
         hdf5_file.close()
 
-    def write_image_data_to_storage(self, data_groups):
+    def write_image_data_to_storage(self, data_groups, save_masks=False):
 
         """ Some of the syntax around data groups can be cleaned up in this function.
         """
@@ -149,10 +151,10 @@ class DataCollection(object):
 
             print '\n'
 
-            self.recursive_augmentation(data_group_objects)
+            self.recursive_augmentation(data_group_objects, save_masks)
 
 
-    def recursive_augmentation(self, data_groups, augmentation_num=0):
+    def recursive_augmentation(self, data_groups, augmentation_num=0, save_masks=False):
 
         """ This function baldly reveals my newness at recursion..
         """
@@ -160,6 +162,19 @@ class DataCollection(object):
         print 'BEGIN RECURSION FOR AUGMENTATION NUM', augmentation_num
 
         if augmentation_num == len(self.augmentations):
+
+            # TEMPORARY: Add code for generating masks.
+            input_data = self.data_groups['input_modalities'].current_case
+            ground_truth_data = self.data_groups['ground_truth'].current_case
+
+            self.data_groups['input_modalities'].brainmask_outputpath = os.path.join(self.brainmask_dir, os.path.basename(self.data_groups['input_modalities'].base_casename) + '_' + str(self.augmentations[augmentation_num-1].augmentation_dict['input_modalities'].iteration) + '.npy')
+            self.data_groups['input_modalities'].roimask_outputpath = os.path.join(self.roimask_dir, os.path.basename(self.data_groups['input_modalities'].base_casename) + '_' + str(self.augmentations[augmentation_num-1].augmentation_dict['input_modalities'].iteration) + '.npy')
+            self.data_groups['ground_truth'].brainmask_outputpath = self.data_groups['input_modalities'].brainmask_outputpath
+            self.data_groups['ground_truth'].roimask_outputpath = self.data_groups['input_modalities'].roimask_outputpath
+
+            if save_masks:
+                save_masked_indice_list(input_data, self.data_groups['ground_truth'].brainmask_outputpath, self.data_groups['ground_truth'].roimask_outputpath, ground_truth_data)
+
             for data_group in data_groups:
                 data_group.write_to_storage()
             return
@@ -178,7 +193,7 @@ class DataCollection(object):
                     data_group.current_case = data_group.augmentation_cases[augmentation_num]
                     data_group.augmentation_num += 1
 
-                self.recursive_augmentation(data_groups, augmentation_num+1)
+                self.recursive_augmentation(data_groups, augmentation_num+1, save_masks)
 
                 print 'FINISH RECURSION FOR AUGMENTATION NUM', augmentation_num+1
 
@@ -188,6 +203,7 @@ class DataCollection(object):
                     else:
                         data_group.current_case = data_group.augmentation_cases[augmentation_num - 1]
 
+                
                 for data_group in data_groups:        
                     self.augmentations[augmentation_num].augmentation_dict[data_group.label].iterate()
 
@@ -218,6 +234,12 @@ class DataGroup(object):
         self.data_storage = None
         self.casename_storage = None
         self.affine_storage = None
+
+        # TEMPORARY
+        self.roimask_storage = None
+        self.brainmask_storage = None
+        self.roimask_outputpath = None
+        self.brainmask_outputpath = None
 
         self.num_cases = 0
 
@@ -285,9 +307,11 @@ class DataGroup(object):
     def write_to_storage(self):
         self.data_storage.append(self.current_case)
         self.casename_storage.append(np.array(self.base_casename)[np.newaxis][np.newaxis])
+        # self.roimask_storage.append(np.array(self.roimask_outputpath)[np.newaxis][np.newaxis])
+        # self.brainmask_storage.append(np.array(self.brainmask_outputpath)[np.newaxis][np.newaxis])
         self.affine_storage.append(self.base_affine[:][np.newaxis])
 
-def create_hdf5_file(output_filepath, data_groups, data_collection):
+def create_hdf5_file(output_filepath, data_groups, data_collection, save_masks=False):
 
     # Investigate hdf5 files.
     hdf5_file = tables.open_file(output_filepath, mode='w')
@@ -311,9 +335,12 @@ def create_hdf5_file(output_filepath, data_groups, data_collection):
         data_shape = tuple([0, modalities] + list(output_shape))
 
         data_group.data_storage = hdf5_file.create_earray(hdf5_file.root, data_group.label, tables.Float32Atom(), shape=data_shape, filters=filters, expectedrows=num_cases)
+
         # Naming convention is sketchy here, TODO, think about this.
         data_group.casename_storage = hdf5_file.create_earray(hdf5_file.root, '_'.join([data_group.label, 'casenames']), tables.StringAtom(256), shape=(0,1), filters=filters, expectedrows=num_cases)
         data_group.affine_storage = hdf5_file.create_earray(hdf5_file.root, '_'.join([data_group.label, 'affines']), tables.Float32Atom(), shape=(0,4,4), filters=filters, expectedrows=num_cases)
+        data_group.roimask_storage = hdf5_file.create_earray(hdf5_file.root, '_'.join([data_group.label, 'roimask']), tables.StringAtom(256), shape=(0,1), filters=filters, expectedrows=num_cases)
+        data_group.brainmask_storage = hdf5_file.create_earray(hdf5_file.root, '_'.join([data_group.label, 'brainmask']), tables.StringAtom(256), shape=(0,1), filters=filters, expectedrows=num_cases)
 
     return hdf5_file
 
@@ -329,6 +356,59 @@ def read_image_files(image_files, return_affine=False):
         return np.stack([image for image in image_list]), nib.load(image_files[0]).affine
     else:
         return np.stack([image for image in image_list])
+
+def save_masked_indice_list(input_data, brainmask_outputpath, roimask_outputpath=None, ground_truth_data=None, mask_value=0):
+
+    input_data = np.squeeze(input_data[:,0,...])
+    ground_truth_data = np.squeeze(ground_truth_data)
+    patch_size = (16,16,16)
+    data_shape = input_data.shape
+
+    nonzero_idx = input_data != mask_value
+    nontumor_idx = ground_truth_data == mask_value
+
+    brain_idx = np.logical_and(nonzero_idx, nontumor_idx)
+    brain_idx = remove_invalid_idx(brain_idx, data_shape, patch_size)
+
+    tumor_idx = np.asarray(np.where(ground_truth_data > mask_value)).T
+    tumor_idx = remove_invalid_idx(tumor_idx, data_shape, patch_size)
+
+    np.save(brainmask_outputpath, brain_idx)
+    np.save(roimask_outputpath, tumor_idx)
+
+    # return brain_idx, tumor_idx
+
+def remove_invalid_idx(orignal_idx, shape, patch_size):
+
+    idx1 = (orignal_idx + patch_size[0]/2)[:,0] < shape[0]
+    idx2 = (orignal_idx + patch_size[1]/2)[:,1] < shape[1]
+    idx3 = (orignal_idx + patch_size[2]/2)[:,2] < shape[2]
+    idx4 = (orignal_idx - patch_size[0]/2)[:,0] >= 0
+    idx5 = (orignal_idx - patch_size[1]/2)[:,1] >= 0
+    idx6 = (orignal_idx - patch_size[2]/2)[:,2] >= 0
+
+    valid = idx1 & idx2 & idx3 & idx4 & idx5 & idx6
+
+    return orignal_idx[np.where(valid)[0],:]
+
+def generate_idx(patient_dir,patch_size):
+    os.chdir(patient_dir)
+    seg = np.round(nib.load('seg_pp.nii.gz').get_data())
+    FLAIR = np.round(nib.load('FLAIR_pp.nii.gz').get_data())
+    
+    nontumor_idx = np.asarray(np.where(seg==0)).T
+    nonbackground_idx = np.asarray(np.nonzero(FLAIR)).T
+    #normbrain = intersection of nontumor_idx and nonbackground_idx
+    aset = set([tuple(x) for x in nontumor_idx])
+    bset = set([tuple(x) for x in nonbackground_idx])
+    normbrain_idx = np.array([x for x in aset & bset])
+    valid_normbrain_idx = remove_invalid_idx(normbrain_idx,FLAIR.shape,patch_size)                     
+    
+    tumor_idx = np.asarray(np.where(seg>0)).T
+    valid_tumor_idx = remove_invalid_idx(tumor_idx,FLAIR.shape,patch_size)
+    
+    np.save('normbrain_idx',valid_normbrain_idx)
+    np.save('tumor_idx',valid_tumor_idx)
 
 if __name__ == '__main__':
     pass

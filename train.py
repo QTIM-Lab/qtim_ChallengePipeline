@@ -13,10 +13,17 @@ from keras.utils import plot_model
 from keras.backend import clear_session
 
 import config_files.isles_config as isles_config
+import config_files.edema_config as edema_config
+import config_files.tumor1_config as tumor1_config
+import config_files.tumor2_config as tumor2_config
+import config_files.nonenhancing1_config as nonenhancing1_config
+import config_files.nonenhancing2_config as nonenhancing2_config
+import config_files.upsample_config as upsample_config
+import config_files.old_edema_config as old_edema_config
 
 from model import n_net_3d, u_net_3d, split_u_net_3d, w_net_3d, load_old_model, vox_net, parellel_unet_3d
 from load_data import DataCollection
-from data_generator import get_data_generator
+from data_generator import get_data_generator, get_patch_data_generator
 from data_utils import pickle_dump, pickle_load
 from predict import model_predict_patches_hdf5
 from augment import *
@@ -29,8 +36,8 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     # append_prefix_to_config(config, ["hdf5_train", "hdf5_validation", "hdf5_test"], 'downsample_')
     # append_prefix_to_config(config, ["model_file"], 'downsample_')    
 
-    # config['predictions_name'] = 'downsample_edema_prediction'
-    config['predictions_replace_existing'] = True
+    config['predictions_name'] = 'infinite_patch_edema_prediction'
+    # config['predictions_replace_existing'] = True
     # config['overwrite_trainval_data'] = True
     
     # config['patch_shape'] = (24, 24, 4)
@@ -45,6 +52,9 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
 
     # config["image_shape"] = None
 
+    config['brain_mask_dir']= None
+    config['roi_mask_dir'] = None
+
     update_config(config=config, parameters=parameters)
     create_directories(delete=delete, config=config)
 
@@ -56,37 +66,38 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
 
         print 'WRITING DATA', '\n'
 
-        # Find Data
-        training_data_collection = DataCollection(config['train_dir'], modality_dict)
+        flip_augmentation_group = AugmentationGroup({'input_modalities': Flip_Rotate_2D(flip=True, rotate=False), 'ground_truth': Flip_Rotate_2D(flip=True, rotate=False)}, multiplier=2)
+
+        # # Find Data
+        training_data_collection = DataCollection(config['train_dir'], modality_dict, brainmask_dir=config['brain_mask_dir'], roimask_dir=config['roi_mask_dir'])
         training_data_collection.fill_data_groups()
 
-        flip_augmentation = Flip_Rotate_2D(flip=True, rotate=False)
-        flip_augmentation_group = AugmentationGroup({'input_modalities': flip_augmentation, 'ground_truth': flip_augmentation}, multiplier=2)
+        # # Training - with patch augmentation
+        if not config['perpetual_patches']:
+            training_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
+            training_patch_augmentation_group = AugmentationGroup({'input_modalities': training_patch_augmentation, 'ground_truth': training_patch_augmentation}, multiplier=config['training_patches_multiplier'])
+            training_data_collection.append_augmentation(training_patch_augmentation_group)
 
-        # Training - with patch augmentation
-        patch_extraction_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
-        training_patch_augmentation_group = AugmentationGroup({'input_modalities': patch_extraction_augmentation, 'ground_truth': patch_extraction_augmentation}, multiplier=config['training_patches_multiplier'])
-
-        training_data_collection.append_augmentation(training_patch_augmentation_group)
         training_data_collection.append_augmentation(flip_augmentation_group)
-
-        training_data_collection.write_data_to_file(output_filepath = config['hdf5_train'])
+        training_data_collection.write_data_to_file(output_filepath = config['hdf5_train'], save_masks=config["overwrite_masks"])
 
         # Validation - with patch augmentation
         validation_data_collection = DataCollection(config['validation_dir'], modality_dict)
         validation_data_collection.fill_data_groups()
 
-        validation_patch_augmentation_group = AugmentationGroup({'input_modalities': patch_extraction_augmentation, 'ground_truth': patch_extraction_augmentation}, multiplier=config['validation_patches_multiplier'])
-        validation_data_collection.append_augmentation(validation_patch_augmentation_group)
+        if not config['perpetual_patches']:
+            validation_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
+            validation_patch_augmentation_group = AugmentationGroup({'input_modalities': validation_patch_augmentation, 'ground_truth': validation_patch_augmentation}, multiplier=config['validation_patches_multiplier'])
+            validation_data_collection.append_augmentation(validation_patch_augmentation_group)
+        
         validation_data_collection.append_augmentation(flip_augmentation_group)
-
-        validation_data_collection.write_data_to_file(output_filepath = config['hdf5_validation'])
+        validation_data_collection.write_data_to_file(output_filepath = config['hdf5_validation'], save_masks=config["overwrite_masks"])
 
     # Create a new model if necessary. Preferably, load an existing one.
     if not config["overwrite_model"] and os.path.exists(config["model_file"]):
         model = load_old_model(config["model_file"])
     else:
-        model = split_u_net_3d(input_shape=(len(modality_dict['input_modalities']),) + config['patch_shape'], output_shape=(len(modality_dict['ground_truth']),) + config['patch_shape'], downsize_filters_factor=config['downsize_filters_factor'], initial_learning_rate=config['initial_learning_rate'], regression=config['regression'], num_outputs=(len(modality_dict['ground_truth'])))
+        model = u_net_3d(input_shape=(len(modality_dict['input_modalities']),) + config['patch_shape'], output_shape=(len(modality_dict['ground_truth']),) + config['patch_shape'], downsize_filters_factor=config['downsize_filters_factor'], initial_learning_rate=config['initial_learning_rate'], regression=config['regression'], num_outputs=(len(modality_dict['ground_truth'])))
 
     plot_model(model, to_file='model_image.png', show_shapes=True)
 
@@ -96,12 +107,16 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
         # Get training and validation generators, either split randomly from the training data or from separate hdf5 files.
         if os.path.exists(os.path.abspath(config["hdf5_validation"])):
             open_validation_hdf5 = tables.open_file(config["hdf5_validation"], "r")
-            validation_generator, num_validation_steps = get_data_generator(open_validation_hdf5, batch_size=1, data_labels = ['input_modalities', 'ground_truth'])
+            validation_generator, num_validation_steps = get_data_generator(open_validation_hdf5, batch_size=config["validation_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
         else:
             open_validation_hdf5 = []
 
         open_train_hdf5 = tables.open_file(config["hdf5_train"], "r")
-        train_generator, num_train_steps = get_data_generator(open_train_hdf5, batch_size=config["batch_size"], data_labels = ['input_modalities', 'ground_truth'])
+
+        if config['perpetual_patches']:
+            train_generator, num_train_steps = get_patch_data_generator(open_train_hdf5, batch_size=config["training_batch_size"], data_labels = ['input_modalities', 'ground_truth'], patch_multiplier=config['patch_multiplier'], patch_shape=config['patch_shape'], roi_ratio=config['roi_ratio'])
+        else:
+            train_generator, num_train_steps = get_data_generator(open_train_hdf5, batch_size=config["training_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
 
         # Train model.. TODO account for no validation
         train_model(model=model, model_file=config["model_file"], training_generator=train_generator, validation_generator=validation_generator, steps_per_epoch=num_train_steps, validation_steps=num_validation_steps, initial_learning_rate=config["initial_learning_rate"], learning_rate_drop=config["learning_rate_drop"], learning_rate_epochs=config["decay_learning_rate_every_x_epochs"], n_epochs=config["n_epochs"])
@@ -124,16 +139,17 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     # Run prediction step.
     if config['overwrite_prediction']:
         open_test_hdf5 = tables.open_file(config["hdf5_test"], "r")
-        model_predict_patches_hdf5(output_directory=config['predictions_folder'], output_name=config['predictions_name'], input_data_label=config['predictions_input'], ground_truth_data_label=config['predictions_groundtruth'], model=model, data_file=open_test_hdf5, patch_shape=config['patch_shape'], replace_existing=config['predictions_replace_existing'])
+        model_predict_patches_hdf5(data_file=open_test_hdf5, input_data_label=config['predictions_input'], patch_shape=config['patch_shape'], output_directory=config['predictions_folder'], output_name=config['predictions_name'], ground_truth_data_label=config['predictions_groundtruth'], model=model, replace_existing=config['predictions_replace_existing'])
 
     clear_session()
 
 def create_directories(delete=False, config=None):
 
     # Create required directories
-    for directory in [config['model_file'], config['hdf5_train'], config['hdf5_test'], config['hdf5_validation'], config['predictions_folder']]:
+    for directory in [config['model_file'], config['hdf5_train'], config['hdf5_test'], config['hdf5_validation'], config['predictions_folder'], config['brain_mask_dir'], config['roi_mask_dir']]:
         if directory is not None:
             directory = os.path.abspath(directory)
+            print directory
             if not os.path.isdir(directory):
                 directory = os.path.dirname(directory)
             if delete:
@@ -191,21 +207,24 @@ if __name__ == '__main__':
 
     # learning_pipeline(config=isles_config.default_config(), overwrite=False)
     # learning_pipeline(config=isles_config.train_config(), overwrite=False)
-    learning_pipeline(config=isles_config.predict_config(), overwrite=False)
+    # learning_pipeline(config=isles_config.predict_config(), overwrite=False)
 
 
     # BRATS CONFIGURATION OPTIONS
 
-    # learning_pipeline(config=edema_config.train_config(), overwrite=False)
+    learning_pipeline(config=old_edema_config.predict_config(), overwrite=False)
+
+    # learning_pipeline(config=edema_config.default_config(), overwrite=False)
     # learning_pipeline(config=edema_config.predict_config(), overwrite=False)
-    # learning_pipeline(config=tumor1_config.train_config(), overwrite=False)
-    # learning_pipeline(config=tumor1_config.predict_config(), overwrite=False)
-    # learning_pipeline(config=nonenhancing1_config.train_config(), overwrite=False)
+    # learning_pipeline(config=edema_config.train_config(), overwrite=False)
+    # learning_pipeline(config=tumor1_config.train_data_config(), overwrite=False)
+    # learning_pipeline(config=nonenhancing1_config.train_data_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False)
-    # learning_pipeline(config=tumor2_config.train_config(), overwrite=False)
+    # learning_pipeline(config=tumor2_config.train_data_config(), overwrite=False)
     # learning_pipeline(config=tumor2_config.test_config(), overwrite=False)
-    # learning_pipeline(config=nonenhancing2_config.train_config(), overwrite=False)
+    # learning_pipeline(config=nonenhancing2_config.train_data_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False)
+    # learning_pipeline(config=upsample_config.train_data_config(), overwrite=False)
 
     # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
     # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})

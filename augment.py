@@ -146,7 +146,7 @@ class Flip_Rotate_2D(Augmentation):
     def augment(self, input_data):
 
         if self.available_transforms[self.iteration % 8, 0]:
-            input_data = np.fliplr(input_data)
+            input_data = np.flip(input_data, 2)
 
         if self.available_transforms[self.iteration % 8, 1] > 0:
             input_data = np.rot90(input_data, self.available_transforms[self.iteration % 8, 1])

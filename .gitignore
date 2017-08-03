@@ -5,6 +5,7 @@
 /predictions/*
 /config_files/*
 /other/*
+/roi_masks/*
 *.pkl
 *.png
 *.log

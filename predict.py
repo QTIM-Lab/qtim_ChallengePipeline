@@ -83,12 +83,10 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
 
         # Get the shape of the output either from input data, groundtruth, or pre-specification.
         if ground_truth_data_label is None and output_shape is None:
-            output_shape = list(final_image.shape)
+            output_shape = list(case_input_data.shape)
             output_shape[1] = 1
             output_shape = tuple(output_shape)
-        elif ground_truth_data_label is None:
-            pass
-        else:
+        elif output_shape is None:
             output_shape = case_groundtruth_data.shape
 
         output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)

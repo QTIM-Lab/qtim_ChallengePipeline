@@ -2,6 +2,7 @@ import tables
 import os
 import math
 
+from time import gmtime, strftime
 from functools import partial
 from shutil import rmtree
 
@@ -15,7 +16,8 @@ import config_files.tumor1_config as tumor1_config
 import config_files.tumor2_config as tumor2_config
 import config_files.nonenhancing1_config as nonenhancing1_config
 import config_files.nonenhancing2_config as nonenhancing2_config
-import config_files.upsample_config as upsample_config
+import config_files.downsampled_edema_config as downsampled_edema_config
+import config_files.upmsapled_config as upsample_config
 import config_files.old_edema_config as old_edema_config
 import config_files.fms_config as fms_config
 
@@ -32,9 +34,9 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     # Modifications to add in regardless of config file
     ####################################################
     # append_prefix_to_config(config, ["hdf5_train", "hdf5_validation", "hdf5_test"], 'downsample_')
-    # append_prefix_to_config(config, ["model_file"], 'downsample_')    
+    append_prefix_to_config(config, ["model_file"], strftime("%Y-%m-%d_%H:%M:%S", gmtime()))    
 
-    config['predictions_name'] = 'perpetual_patch_32'
+    # config['predictions_name'] = 'perpetual_patch_32'
     # config['predictions_replace_existing'] = True
     # config['overwrite_trainval_data'] = True
     
@@ -63,29 +65,31 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
 
         flip_augmentation_group = AugmentationGroup({'input_modalities': Flip_Rotate_2D(flip=True, rotate=False), 'ground_truth': Flip_Rotate_2D(flip=True, rotate=False)}, multiplier=2)
 
-        # # Find Data
-        # training_data_collection = DataCollection(config['train_dir'], modality_dict, brainmask_dir=config['brain_mask_dir'], roimask_dir=config['roi_mask_dir'], patch_shape=config['patch_shape'])
-        # training_data_collection.fill_data_groups()
+        # Find Data
+        training_data_collection = DataCollection(config['train_dir'], modality_dict, brainmask_dir=config['brain_mask_dir'], roimask_dir=config['roi_mask_dir'], patch_shape=config['patch_shape'])
+        training_data_collection.fill_data_groups()
 
-        # # # Training - with patch augmentation
-        # if not config['perpetual_patches']:
-        #     training_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
-        #     training_patch_augmentation_group = AugmentationGroup({'input_modalities': training_patch_augmentation, 'ground_truth': training_patch_augmentation}, multiplier=config['training_patches_multiplier'])
-        #     training_data_collection.append_augmentation(training_patch_augmentation_group)
+        # # Training - with patch augmentation
+        if not config['perpetual_patches']:
+            training_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
+            training_patch_augmentation_group = AugmentationGroup({'input_modalities': training_patch_augmentation, 'ground_truth': training_patch_augmentation}, multiplier=config['training_patches_multiplier'])
+            training_data_collection.append_augmentation(training_patch_augmentation_group)
 
-        # training_data_collection.append_augmentation(flip_augmentation_group)
-        # training_data_collection.write_data_to_file(output_filepath = config['hdf5_train'], save_masks=config["overwrite_masks"])
+        training_data_collection.append_augmentation(flip_augmentation_group)
+        training_data_collection.write_data_to_file(output_filepath = config['hdf5_train'], save_masks=config["overwrite_masks"])
 
-        # Validation - with patch augmentation
-        validation_data_collection = DataCollection(config['validation_dir'], modality_dict, brainmask_dir=config['brain_mask_dir'], roimask_dir=config['roi_mask_dir'], patch_shape=config['patch_shape'])
-        validation_data_collection.fill_data_groups()
+        if config['validation_dir'] is not None:
 
-        # validation_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
-        # validation_patch_augmentation_group = AugmentationGroup({'input_modalities': validation_patch_augmentation, 'ground_truth': validation_patch_augmentation}, multiplier=config['validation_patches_multiplier'])
-        # validation_data_collection.append_augmentation(validation_patch_augmentation_group)
-        
-        validation_data_collection.append_augmentation(flip_augmentation_group)
-        validation_data_collection.write_data_to_file(output_filepath = config['hdf5_validation'], save_masks=config["overwrite_masks"], store_masks=True)
+            # Validation - with patch augmentation
+            validation_data_collection = DataCollection(config['validation_dir'], modality_dict, brainmask_dir=config['brain_mask_dir'], roimask_dir=config['roi_mask_dir'], patch_shape=config['patch_shape'])
+            validation_data_collection.fill_data_groups()
+
+            # validation_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
+            # validation_patch_augmentation_group = AugmentationGroup({'input_modalities': validation_patch_augmentation, 'ground_truth': validation_patch_augmentation}, multiplier=config['validation_patches_multiplier'])
+            # validation_data_collection.append_augmentation(validation_patch_augmentation_group)
+            
+            validation_data_collection.append_augmentation(flip_augmentation_group)
+            validation_data_collection.write_data_to_file(output_filepath = config['hdf5_validation'], save_masks=config["overwrite_masks"], store_masks=True)
 
     # Create a new model if necessary. Preferably, load an existing one.
     if not config["overwrite_model"] and os.path.exists(config["model_file"]):
@@ -107,6 +111,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
                 validation_generator, num_validation_steps = get_data_generator(open_validation_hdf5, batch_size=config["validation_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
         else:
             open_validation_hdf5 = []
+            validation_generator, num_validation_steps = None
 
         open_train_hdf5 = tables.open_file(config["hdf5_train"], "r")
 
@@ -168,7 +173,10 @@ def append_prefix_to_config(config, keys, prefix):
 
 def train_model(model, model_file, training_generator, validation_generator, steps_per_epoch, validation_steps, initial_learning_rate, learning_rate_drop, learning_rate_epochs, n_epochs):
 
-    model.fit_generator(generator=training_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs, validation_data=validation_generator, validation_steps=validation_steps, pickle_safe=True, callbacks=get_callbacks(model_file, initial_learning_rate=initial_learning_rate, learning_rate_drop=learning_rate_drop,learning_rate_epochs=learning_rate_epochs))
+    if validation_generator is None:
+        model.fit_generator(generator=training_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs, pickle_safe=True, callbacks=get_callbacks(model_file, initial_learning_rate=initial_learning_rate, learning_rate_drop=learning_rate_drop,learning_rate_epochs=learning_rate_epochs))
+    else:
+        model.fit_generator(generator=training_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs, validation_data=validation_generator, validation_steps=validation_steps, pickle_safe=True, callbacks=get_callbacks(model_file, initial_learning_rate=initial_learning_rate, learning_rate_drop=learning_rate_drop,learning_rate_epochs=learning_rate_epochs))
 
     model.save(model_file)
 
@@ -191,7 +199,7 @@ def get_callbacks(model_file, initial_learning_rate, learning_rate_drop, learnin
     """ Currently do not understand callbacks.
     """
 
-    model_checkpoint = ModelCheckpoint(model_file, monitor="val_loss", save_best_only=True)
+    model_checkpoint = ModelCheckpoint(model_file, monitor="val_loss", save_best_only=False)
     logger = CSVLogger(os.path.join(logging_dir, "training.log"))
     history = SaveLossHistory()
     scheduler = LearningRateScheduler(partial(step_decay, initial_lrate=initial_learning_rate, drop=learning_rate_drop, epochs_drop=learning_rate_epochs))
@@ -211,9 +219,13 @@ def pipeline():
     # learning_pipeline(config=old_edema_config.predict_config(), overwrite=False)
 
     # learning_pipeline(config=edema_config.default_config(), overwrite=False)
-    learning_pipeline(config=edema_config.train_config(), overwrite=False)
-    learning_pipeline(config=edema_config.predict_config(), overwrite=False)
+    # learning_pipeline(config=edema_config.train_config(), overwrite=False)
+    # learning_pipeline(config=edema_config.test_config(), overwrite=False)
+
+    learning_pipeline(config=downsampled_edema_config.default_config(), overwrite=False)
+
     # learning_pipeline(config=fms_config.test_config(), overwrite=False)
+    
     # learning_pipeline(config=tumor1_config.train_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing1_config.default_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False)

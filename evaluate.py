@@ -32,7 +32,7 @@ def dice_spreadsheet(input_directories, ground_truth, comparison_files, output_c
                     output_numpy_list[directory_idx][subdir_idx,1+vol_idx] = calculate_prediction_dice(input_volume_filename, ground_truth_filename)
                     print output_numpy_list[directory_idx][subdir_idx,:]
                 except:
-                    pass
+                    output_numpy_list[directory_idx][subdir_idx,1+vol_idx] = ''
 
     final_numpy = output_numpy_list[0]
     if len(output_numpy_list) > 1:
@@ -69,9 +69,9 @@ def calculate_prediction_dice(label_volume_1, label_volume_2):
 
 if __name__ == '__main__':
 
-    input_directories = ['/mnt/jk489/sharedfolder/BRATS2017/Train', '/mnt/jk489/sharedfolder/BRATS2017/Val']
+    input_directories = ['/mnt/jk489/sharedfolder/BRATS2017/Val']
     ground_truth = 'seg_pp.nii.gz'
-    comparison_files = ['infinite_patch_edema_prediction-label.nii.gz', 'edema_prediction-label.nii.gz']
+    comparison_files = ['infinite_patch_edema_prediction-label.nii.gz', 'edema_prediction-label.nii.gz', 'perpetual_patch_32-label.nii.gz']
     output_csv = 'dice_comparison.csv'
 
     dice_spreadsheet(input_directories, ground_truth, comparison_files, output_csv)

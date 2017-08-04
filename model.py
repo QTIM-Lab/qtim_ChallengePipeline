@@ -170,7 +170,7 @@ def split_u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=
     for modality in xrange(input_modalities):
 
         left_arms[modality]['conv1'] = Conv3D(int(32/left_downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',
-                       padding='same')(inputs)
+                       padding='same')(Lambda(lambda x: inputs[:,modality,:,:], output_shape=(1,) + input_shape[2:])(inputs))
         left_arms[modality]['conv1'] = Conv3D(int(64/left_downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',
                        padding='same')(left_arms[modality]['conv1'])
 

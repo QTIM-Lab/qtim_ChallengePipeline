@@ -67,6 +67,7 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
             output_filepath = os.path.join(case_directory, case_output_name + '.nii.gz')
             print os.path.basename(case_directory)
 
+        print output_filepath
         # If prediction already exists, skip it. Useful if process is interrupted.
         if os.path.exists(output_filepath) and not replace_existing:
             continue

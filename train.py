@@ -17,7 +17,8 @@ import config_files.tumor2_config as tumor2_config
 import config_files.nonenhancing1_config as nonenhancing1_config
 import config_files.nonenhancing2_config as nonenhancing2_config
 import config_files.downsampled_edema_config as downsampled_edema_config
-import config_files.upmsapled_config as upsample_config
+import config_files.upsample_config as upsample_config
+import config_files.upsample_preloaded_config as upsample_preloaded_config
 import config_files.old_edema_config as old_edema_config
 import config_files.fms_config as fms_config
 
@@ -34,7 +35,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     # Modifications to add in regardless of config file
     ####################################################
     # append_prefix_to_config(config, ["hdf5_train", "hdf5_validation", "hdf5_test"], 'downsample_')
-    append_prefix_to_config(config, ["model_file"], strftime("%Y-%m-%d_%H:%M:%S", gmtime()))    
+    # append_prefix_to_config(config, ["model_file"], strftime("%Y-%m-%d_%H:%M:%S", gmtime()))    
 
     # config['predictions_name'] = 'perpetual_patch_32'
     # config['predictions_replace_existing'] = True
@@ -84,9 +85,10 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
             validation_data_collection = DataCollection(config['validation_dir'], modality_dict, brainmask_dir=config['brain_mask_dir'], roimask_dir=config['roi_mask_dir'], patch_shape=config['patch_shape'])
             validation_data_collection.fill_data_groups()
 
-            # validation_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
-            # validation_patch_augmentation_group = AugmentationGroup({'input_modalities': validation_patch_augmentation, 'ground_truth': validation_patch_augmentation}, multiplier=config['validation_patches_multiplier'])
-            # validation_data_collection.append_augmentation(validation_patch_augmentation_group)
+            if not config['perpetual_patches']:
+                validation_patch_augmentation = ExtractPatches(config['patch_shape'], config['patch_extraction_conditions'])
+                validation_patch_augmentation_group = AugmentationGroup({'input_modalities': validation_patch_augmentation, 'ground_truth': validation_patch_augmentation}, multiplier=config['validation_patches_multiplier'])
+                validation_data_collection.append_augmentation(validation_patch_augmentation_group)
             
             validation_data_collection.append_augmentation(flip_augmentation_group)
             validation_data_collection.write_data_to_file(output_filepath = config['hdf5_validation'], save_masks=config["overwrite_masks"], store_masks=True)
@@ -111,7 +113,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
                 validation_generator, num_validation_steps = get_data_generator(open_validation_hdf5, batch_size=config["validation_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
         else:
             open_validation_hdf5 = []
-            validation_generator, num_validation_steps = None
+            validation_generator, num_validation_steps = None, None
 
         open_train_hdf5 = tables.open_file(config["hdf5_train"], "r")
 
@@ -199,7 +201,7 @@ def get_callbacks(model_file, initial_learning_rate, learning_rate_drop, learnin
     """ Currently do not understand callbacks.
     """
 
-    model_checkpoint = ModelCheckpoint(model_file, monitor="val_loss", save_best_only=False)
+    model_checkpoint = ModelCheckpoint(model_file, monitor="loss", save_best_only=True)
     logger = CSVLogger(os.path.join(logging_dir, "training.log"))
     history = SaveLossHistory()
     scheduler = LearningRateScheduler(partial(step_decay, initial_lrate=initial_learning_rate, drop=learning_rate_drop, epochs_drop=learning_rate_epochs))
@@ -220,12 +222,15 @@ def pipeline():
 
     # learning_pipeline(config=edema_config.default_config(), overwrite=False)
     # learning_pipeline(config=edema_config.train_config(), overwrite=False)
-    # learning_pipeline(config=edema_config.test_config(), overwrite=False)
+    # learning_pipeline(config=edema_config.predict_config(), overwrite=False)
 
-    learning_pipeline(config=downsampled_edema_config.default_config(), overwrite=False)
+    # learning_pipeline(config=downsampled_edema_config.default_config(), overwrite=False)
 
     # learning_pipeline(config=fms_config.test_config(), overwrite=False)
     
+    # learning_pipeline(config=upsample_config.test_config(), overwrite=False)  
+    learning_pipeline(config=upsample_preloaded_config.test_config(), overwrite=False)
+
     # learning_pipeline(config=tumor1_config.train_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing1_config.default_config(), overwrite=False)
     # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False)

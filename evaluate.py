@@ -70,8 +70,7 @@ def calculate_prediction_dice(label_volume_1, label_volume_2):
 if __name__ == '__main__':
 
     input_directories = ['/mnt/jk489/sharedfolder/BRATS2017/Val']
-    ground_truth = 'seg_pp.nii.gz'
-    comparison_files = ['infinite_patch_edema_prediction-label.nii.gz', 'edema_prediction-label.nii.gz', 'perpetual_patch_32-label.nii.gz']
+    ground_truth = 'full_edemamask_pp.nii.gz'
+    comparison_files = ['edema_upsampled_preloaded_3_1_prediction-label.nii.gz', 'full_edemamask_pp_downsampled_nn.nii.gz']
     output_csv = 'dice_comparison.csv'
-
     dice_spreadsheet(input_directories, ground_truth, comparison_files, output_csv)

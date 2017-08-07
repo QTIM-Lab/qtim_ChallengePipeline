@@ -400,9 +400,15 @@ def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, poo
         model = Model(inputs=inputs, outputs=act)
         model.compile(optimizer=Adam(lr=initial_learning_rate), loss=msq_loss, metrics=[dice_coef])
     else:
-        act = Activation('sigmoid')(conv8)
-        model = Model(inputs=inputs, outputs=act)
-        model.compile(optimizer=Nadam(lr=initial_learning_rate), loss=dice_coef_loss, metrics=[dice_coef])
+        if num_outputs == 1:
+            act = Activation('sigmoid')(conv8)
+            model = Model(inputs=inputs, outputs=act)
+            model.compile(optimizer=Nadam(lr=initial_learning_rate), loss=dice_coef_loss, metrics=[dice_coef])
+        else:
+            act = Activation('softmax')(conv8)
+            model = Model(inputs=inputs, outputs=act)
+            model.compile(optimizer=Nadam(lr=initial_learning_rate), loss='categorical_crossentropy',
+                          metrics=['categorical_accuracy'])
 
     return model
 

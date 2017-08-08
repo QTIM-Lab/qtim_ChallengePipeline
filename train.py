@@ -18,7 +18,7 @@ import config_files.nonenhancing1_config as nonenhancing1_config
 import config_files.nonenhancing2_config as nonenhancing2_config
 import config_files.downsampled_edema_config as downsampled_edema_config
 import config_files.upsample_config as upsample_config
-import config_files.upsample_preloaded_config as upsample_preloaded_config
+#import config_files.upsample_preloaded_config as upsample_preloaded_config
 import config_files.old_edema_config as old_edema_config
 import config_files.fms_config as fms_config
 
@@ -106,12 +106,16 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
         
         # Get training and validation generators, either split randomly from the training data or from separate hdf5 files.
         if os.path.exists(os.path.abspath(config["hdf5_validation"])):
+            print "Validation data found"
             open_validation_hdf5 = tables.open_file(config["hdf5_validation"], "r")
             if config['perpetual_patches']:
                 validation_generator, num_validation_steps = get_patch_data_generator(open_validation_hdf5, batch_size=config["validation_batch_size"], data_labels = ['input_modalities', 'ground_truth'], patch_multiplier=config['validation_patch_multiplier'], patch_shape=config['patch_shape'], roi_ratio=config['roi_ratio'])
             else:
                 validation_generator, num_validation_steps = get_data_generator(open_validation_hdf5, batch_size=config["validation_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
+                print validation_generator
+                print num_validation_steps
         else:
+            print "Validation data not found"
             open_validation_hdf5 = []
             validation_generator, num_validation_steps = None, None
 
@@ -207,54 +211,72 @@ def get_callbacks(model_file, initial_learning_rate, learning_rate_drop, learnin
     scheduler = LearningRateScheduler(partial(step_decay, initial_lrate=initial_learning_rate, drop=learning_rate_drop, epochs_drop=learning_rate_epochs))
     return [model_checkpoint, logger, history, scheduler]
 
-def pipeline():
+def pipeline(config_name='', mode='default'):
 
-    # ISLES CONFIGURATION OPTIONS
-
-    # learning_pipeline(config=isles_config.default_config(), overwrite=False)
-    # learning_pipeline(config=isles_config.train_config(), overwrite=False)
-    # learning_pipeline(config=isles_config.predict_config(), overwrite=False)
-
-
-    # BRATS CONFIGURATION OPTIONS
-
-    # learning_pipeline(config=old_edema_config.predict_config(), overwrite=False)
-
-    # learning_pipeline(config=edema_config.default_config(), overwrite=False)
-    # learning_pipeline(config=edema_config.train_config(), overwrite=False)
-    # learning_pipeline(config=edema_config.predict_config(), overwrite=False)
-
-    # learning_pipeline(config=downsampled_edema_config.default_config(), overwrite=False)
-
-    # learning_pipeline(config=fms_config.test_config(), overwrite=False)
+    from configs import config_map
+    config_type = config_map[config_name]
     
-    # learning_pipeline(config=upsample_config.test_config(), overwrite=False)  
-    learning_pipeline(config=upsample_preloaded_config.test_config(), overwrite=False)
+    if config_type:
+        
+        if mode == 'default':       
+            config_mode = config_type.default_config()
+        elif mode == 'train':
+            config_mode = config_type.train_config()
+        elif mode == 'test':
+            config_mode = config_type.test_config()
+        else:
+            raise NotImplementedError("Config option '{}' not implemented!".format(mode))
+        
+        learning_pipeline(config=config_mode, overwrite=False)
 
-    # learning_pipeline(config=tumor1_config.train_config(), overwrite=False)
-    # learning_pipeline(config=nonenhancing1_config.default_config(), overwrite=False)
-    # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False)
-    # learning_pipeline(config=tumor2_config.train_data_config(), overwrite=False)
-    # learning_pipeline(config=tumor2_config.test_config(), overwrite=False)
-    # learning_pipeline(config=nonenhancing2_config.train_data_config(), overwrite=False)
-    # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False)
-    # learning_pipeline(config=upsample_config.train_data_config(), overwrite=False)
+    else:
+        pass
+        # ISLES CONFIGURATION OPTIONS
 
-    # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-    # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-    # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})    
-    # learning_pipeline(config=tumor2_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-    # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
+        # learning_pipeline(config=isles_config.default_config(), overwrite=False)
+        # learning_pipeline(config=isles_config.train_config(), overwrite=False)
+        # learning_pipeline(config=isles_config.predict_config(), overwrite=False)
 
-    # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-    # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-    # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})    
-    # learning_pipeline(config=tumor2_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-    # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
 
-    # split_folder('/mnt/jk489/sharedfolder/BRATS2017/Val', .2, ['/mnt/jk489/sharedfolder/BRATS2017/Val_Train', '/mnt/jk489/sharedfolder/BRATS2017/Val_Val'])
-    # learning_pipeline(config=reconciliation_config.train_config(), overwrite=False)
-    # learning_pipeline(config=reconciliation_config.test_config(), overwrite=False)
+        # BRATS CONFIGURATION OPTIONS
+
+        # learning_pipeline(config=old_edema_config.predict_config(), overwrite=False)
+
+        # learning_pipeline(config=edema_config.default_config(), overwrite=False)
+        # learning_pipeline(config=edema_config.train_config(), overwrite=False)
+        # learning_pipeline(config=edema_config.predict_config(), overwrite=False)
+
+        # learning_pipeline(config=downsampled_edema_config.default_config(), overwrite=False)
+
+        # learning_pipeline(config=fms_config.test_config(), overwrite=False)
+        
+        # learning_pipeline(config=upsample_config.test_config(), overwrite=False)  
+        # learning_pipeline(config=upsample_preloaded_config.test_config(), overwrite=False)
+
+        # learning_pipeline(config=tumor1_config.train_config(), overwrite=False)
+        # learning_pipeline(config=nonenhancing1_config.default_config(), overwrite=False)
+        # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False)
+        # learning_pipeline(config=tumor2_config.train_data_config(), overwrite=False)
+        # learning_pipeline(config=tumor2_config.test_config(), overwrite=False)
+        # learning_pipeline(config=nonenhancing2_config.train_data_config(), overwrite=False)
+        # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False)
+        # learning_pipeline(config=upsample_config.train_data_config(), overwrite=False)
+
+        # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
+        # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
+        # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})    
+        # learning_pipeline(config=tumor2_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
+        # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
+
+        # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
+        # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
+        # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})    
+        # learning_pipeline(config=tumor2_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
+        # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
+
+        # split_folder('/mnt/jk489/sharedfolder/BRATS2017/Val', .2, ['/mnt/jk489/sharedfolder/BRATS2017/Val_Train', '/mnt/jk489/sharedfolder/BRATS2017/Val_Val'])
+        # learning_pipeline(config=reconciliation_config.train_config(), overwrite=False)
+        # learning_pipeline(config=reconciliation_config.test_config(), overwrite=False)
 
 
 if __name__ == '__main__':

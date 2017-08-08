@@ -14,7 +14,7 @@ def get_data_generator(data_file, batch_size, data_labels, augmentations=None):
     num_steps = getattr(data_file.root, data_labels[0]).shape[0]
     output_data_generator = data_generator(data_file, range(num_steps), data_labels=data_labels, batch_size=batch_size, augmentations=augmentations)
 
-    return output_data_generator, num_steps // batch_size // 50
+    return output_data_generator, num_steps // batch_size
 
 def data_generator(data_file, index_list, data_labels, batch_size=1, augmentations=None):
 

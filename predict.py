@@ -49,6 +49,8 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
     if ground_truth_data_label is not None:
         truth_list = getattr(data_file.root, ground_truth_data_label)
 
+    output_metrics = []
+
     for case_idx in xrange(total_case_num):
 
         print 'Working on image.. ', case_idx, 'in', total_case_num
@@ -92,7 +94,11 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
 
         output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
 
-        save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
+        output_metrics += [save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)]
+
+        print 'ALL METRICS', output_metrics
+        print 'MEAN METRIC:', np.mean(output_metrics)
+        print 'STD METRIC:', np.std(output_metrics)
 
     data_file.close()
 
@@ -104,7 +110,7 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape, repe
     # Should we automatically determine output_shape?
     output_data = np.zeros(output_shape)
 
-    repetition_offsets = np.linspace(0, 15, repetitions, dtype=int)
+    repetition_offsets = np.linspace(0, patch_shape[-1], repetitions, dtype=int)
     for rep_idx in xrange(repetitions):
 
         print 'PREDICTION PATCH GRID REPETITION # ..', rep_idx
@@ -136,6 +142,9 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
         TODO: Parse out the most logical division of prediction functions.
     """
 
+    output_metric_function = calculate_prediction_dice
+    output_metric = None
+
     # If no affine, create identity affine.
     if input_affine is None:
         input_affine = np.eye(4)
@@ -150,7 +159,8 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
         save_numpy_2_nifti(input_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-probability'))
         save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
         if ground_truth is not None:
-            print 'DICE COEFFICIENT', calculate_prediction_dice(binarized_output_data, np.squeeze(ground_truth))
+            output_metric = output_metric_function(binarized_output_data, ground_truth)
+            print 'DICE COEFFICIENT', output_metric
     
     # If multiple output modalities, either stack one on top of the other (e.g. output 3 over output 2 over output 1).
     # or output multiple volumes.
@@ -170,7 +180,7 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
             save_numpy_2_nifti(input_data[modality,...], reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-probability'))
             save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
 
-    return
+    return output_metric
 
 def patchify_image(input_data, patch_shape, offset=(0,0,0,0), batch_dim=True, return_patches=False, mask_value = 0):
 
@@ -259,6 +269,8 @@ def calculate_prediction_msq(label_volume_1, label_volume_2):
     return
 
 def calculate_prediction_dice(label_volume_1, label_volume_2):
+
+    label_volume_1, label_volume_2 = np.squeeze(label_volume_1), np.squeeze(label_volume_2)
 
     im1 = np.asarray(label_volume_1).astype(np.bool)
     im2 = np.asarray(label_volume_2).astype(np.bool)

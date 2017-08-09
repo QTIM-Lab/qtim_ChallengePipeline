@@ -53,6 +53,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
 
     # config["image_shape"] = None
 
+    fill_config_keys(config=config)
     update_config(config=config, parameters=parameters)
     create_directories(delete=delete, config=config)
 
@@ -105,7 +106,10 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     if config["overwrite_training"]:
         
         # Get training and validation generators, either split randomly from the training data or from separate hdf5 files.
-        if os.path.exists(os.path.abspath(config["hdf5_validation"])):
+        if config["hdf5_validation"] is None:
+            open_validation_hdf5 = []
+            validation_generator, num_validation_steps = None, None
+        elif os.path.exists(os.path.abspath(config["hdf5_validation"])):
             print "Validation data found"
             open_validation_hdf5 = tables.open_file(config["hdf5_validation"], "r")
             if config['perpetual_patches']:
@@ -115,14 +119,12 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
                 print validation_generator
                 print num_validation_steps
         else:
-            print "Validation data not found"
-            open_validation_hdf5 = []
-            validation_generator, num_validation_steps = None, None
+            print "Validation data not found! Exiting pipeline."
 
         open_train_hdf5 = tables.open_file(config["hdf5_train"], "r")
 
         if config['perpetual_patches']:
-            train_generator, num_train_steps = get_patch_data_generator(open_train_hdf5, batch_size=config["training_batch_size"], data_labels = ['input_modalities', 'ground_truth'], patch_multiplier=config['training_patch_multiplier'], patch_shape=config['patch_shape'], roi_ratio=config['roi_ratio'])
+            train_generator, num_train_steps = get_patch_data_generator(open_train_hdf5, batch_size=config["training_batch_size"], data_labels = ['input_modalities', 'ground_truth'], patch_multiplier=config['training_patch_multiplier'], patch_shape=config['patch_shape'], roi_ratio=config['roi_ratio'], num_epoch_steps=config['num_epoch_steps'], num_subepochs=config['num_subepochs'], num_subepoch_patients=config['num_subepoch_patients'])
         else:
             train_generator, num_train_steps = get_data_generator(open_train_hdf5, batch_size=config["training_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
 
@@ -171,6 +173,15 @@ def update_config(config, parameters):
 
     for key in parameters.keys():
         config[key] = parameters[key]
+
+def fill_config_keys(config):
+
+    if 'num_subepochs' not in config.keys():
+        config['num_subepochs'] = None
+
+    if 'num_epoch_steps' not in config.keys():
+        config['num_epoch_steps'] = 10
+
 
 def append_prefix_to_config(config, keys, prefix):
 
@@ -222,6 +233,8 @@ def pipeline(config_name='', mode='default'):
             config_mode = config_type.default_config()
         elif mode == 'train':
             config_mode = config_type.train_config()
+        elif mode == 'predict':
+            config_mode = config_type.predict_config()
         elif mode == 'test':
             config_mode = config_type.test_config()
         else:

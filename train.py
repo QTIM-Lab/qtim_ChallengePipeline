@@ -106,7 +106,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     if config["overwrite_training"]:
         
         # Get training and validation generators, either split randomly from the training data or from separate hdf5 files.
-        if config["hdf5_validation"] is None:
+        if config["validation_dir"] is None:
             open_validation_hdf5 = []
             validation_generator, num_validation_steps = None, None
         elif os.path.exists(os.path.abspath(config["hdf5_validation"])):
@@ -237,6 +237,8 @@ def pipeline(config_name='', mode='default'):
             config_mode = config_type.predict_config()
         elif mode == 'test':
             config_mode = config_type.test_config()
+        elif mode == 'train_data':
+            config_mode = config_type.train_data_config()            
         else:
             raise NotImplementedError("Config option '{}' not implemented!".format(mode))
         

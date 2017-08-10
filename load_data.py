@@ -213,6 +213,8 @@ class DataCollection(object):
 
                 for data_group in data_groups:
 
+                    # print data_group.label
+
                     if augmentation_num == 0:
                         data_group.augmentation_cases[augmentation_num] = self.augmentations[augmentation_num].augmentation_dict[data_group.label].augment(data_group.base_case)
                     else:

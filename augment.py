@@ -135,7 +135,7 @@ class Flip_Rotate_2D(Augmentation):
 
         if not self.initialization:
 
-            np.random.shuffle(self.available_transforms)
+            # np.random.shuffle(self.available_transforms)
 
             self.initialization = True
 
@@ -146,7 +146,10 @@ class Flip_Rotate_2D(Augmentation):
     def augment(self, input_data):
 
         if self.available_transforms[self.iteration % 8, 0]:
+            # print 'FLIPPED'
             input_data = np.flip(input_data, 2)
+        # else:
+            # print 'NOT FLIPPED'
 
         if self.available_transforms[self.iteration % 8, 1] > 0:
             input_data = np.rot90(input_data, self.available_transforms[self.iteration % 8, 1])

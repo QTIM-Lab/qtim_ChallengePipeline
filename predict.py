@@ -111,12 +111,16 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape, repe
     output_data = np.zeros(output_shape)
 
     repetition_offsets = np.linspace(0, patch_shape[-1], repetitions, dtype=int)
+    # repetition_offsets = np.arange(19)
+    # print repetition_offsets
     for rep_idx in xrange(repetitions):
 
         print 'PREDICTION PATCH GRID REPETITION # ..', rep_idx
 
         offset_slice = [slice(None)]*2 + [slice(repetition_offsets[rep_idx], None, 1)] * (input_data.ndim - 2)
+        # print 'OFFSET SLICE,', offset_slice
         repatched_image = np.zeros_like(output_data[offset_slice])
+        # print repatched_image.shape
         corners_list = patchify_image(input_data[offset_slice], [input_data[offset_slice].shape[1]] + list(patch_shape))
 
         for corner_list_idx in xrange(0, len(corners_list), model_batch_size):
@@ -253,7 +257,9 @@ def insert_patch(input_data, patch, corner):
 
     patch_slice = [slice(None)]*2 + [slice(corner_dim, corner_dim+patch_shape[idx], 1) for idx, corner_dim in enumerate(corner[1:])]
     
-    input_data[patch_slice] = patch
+    # print patch.shape
+
+    input_data[patch_slice] = np.flip(patch, 1)
 
     return
 

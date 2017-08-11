@@ -396,9 +396,9 @@ def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, poo
         return conv8
 
     if regression:
-        act = Activation('relu')(conv8)
+        # act = Activation('relu')(conv8)
         model = Model(inputs=inputs, outputs=act)
-        model.compile(optimizer=Adam(lr=initial_learning_rate), loss=msq_loss, metrics=[dice_coef])
+        model.compile(optimizer=Adam(lr=initial_learning_rate), loss=msq_loss, metrics=[msq_loss])
     else:
         if num_outputs == 1:
             act = Activation('sigmoid')(conv8)

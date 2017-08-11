@@ -110,9 +110,10 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape, repe
     # Should we automatically determine output_shape?
     output_data = np.zeros(output_shape)
 
-    repetition_offsets = np.linspace(0, patch_shape[-1], repetitions, dtype=int)
-    # repetition_offsets = np.arange(19)
-    # print repetition_offsets
+    repetition_offsets = np.linspace(0, min(patch_shape[-1], input_data.shape[-1] - patch_shape[-1]), repetitions, dtype=int)
+    repetition_offsets = np.unique(repetition_offsets)
+    repetitions = len(repetition_offsets)
+    
     for rep_idx in xrange(repetitions):
 
         print 'PREDICTION PATCH GRID REPETITION # ..', rep_idx
@@ -259,7 +260,7 @@ def insert_patch(input_data, patch, corner):
     
     # print patch.shape
 
-    input_data[patch_slice] = np.flip(patch, 1)
+    input_data[patch_slice] = patch
 
     return
 

@@ -284,15 +284,15 @@ def calculate_prediction_dice(label_volume_1, label_volume_2):
 
     if im1.shape != im2.shape:
         raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
-
-    im_sum = im1.sum() + im2.sum()
-    if im_sum == 0:
-        return empty_score
+    
+    smooth = 1
+    
+    im_sum = im1.sum() + im2.sum() + smooth
 
     # Compute Dice coefficient
     intersection = np.logical_and(im1, im2)
 
-    return 2. * intersection.sum() / im_sum
+    return (2. * intersection.sum() + smooth) / im_sum
 
 if __name__ == '__main__':
     pass

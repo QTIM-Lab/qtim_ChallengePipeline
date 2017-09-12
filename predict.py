@@ -8,13 +8,14 @@ import tables
 from model import load_old_model
 from image_utils import save_numpy_2_nifti, nifti_2_numpy
 from file_util import replace_suffix, nifti_splitext
+from load_data import read_image_files
 
 import multiprocessing
 from functools import partial
 
 from joblib import Parallel, delayed
 
-def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetitions=16, test_batch_size=200, ground_truth_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
+def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetitions=24, test_batch_size=200, ground_truth_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
 
     """ TODO: Make work for multiple inputs and outputs.
         TODO: Interact with data group interface
@@ -48,8 +49,6 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
 
     if ground_truth_data_label is not None:
         truth_list = getattr(data_file.root, ground_truth_data_label)
-
-    output_metrics = []
 
     for case_idx in xrange(total_case_num):
 
@@ -94,15 +93,93 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
 
         output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
 
-        output_metrics += [save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)]
-
-        print 'ALL METRICS', output_metrics
-        print 'MEAN METRIC:', np.mean(output_metrics)
-        print 'STD METRIC:', np.std(output_metrics)
+        save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
 
     data_file.close()
 
-def predict_patches_one_image(input_data, patch_shape, model, output_shape, repetitions=1, model_batch_size=1):
+def model_predict_patches_collection(data_collection, input_data_label, patch_shape, repetitions=10, test_batch_size=200, ground_truth_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
+
+    """ TODO: Make work for multiple inputs and outputs.
+        TODO: Interact with data group interface
+        TODO: Pass output filenames to hdf5 files.
+    """
+
+    # Create output directory. If not provided, output into original patient folder.
+    if output_directory is not None:
+        if not os.path.exists(output_directory):
+            os.makedirs(output_directory)
+
+    # Load model.
+    if model is None and model_file is None:
+        print 'Error. Please provide either a model object or a model filepath.'
+    elif model is None:
+        model = load_old_model(model_file)
+
+    # Filename for output predictions. TODO: Make a more informative output for output_name == None
+    if output_name == None:
+        case_output_name = 'TESTCASE_' + str(case_idx).zfill(3) + '_PREDICT'
+    else:
+        case_output_name = output_name
+
+    case_list = data_collection.data_groups[input_data_label].cases
+    input_data_list = data_collection.data_groups[input_data_label].data
+
+    if ground_truth_data_label is not None:
+        groundtruth_data_list = data_collection.data_groups[ground_truth_data_label].data
+    total_case_num = len(case_list)
+
+    for case_idx in xrange(total_case_num):
+
+        case_folder = case_list[case_idx]
+        input_data_filepaths = input_data_list[case_idx]
+        if ground_truth_data_label is not None:
+            groundtruth_data_filepaths = groundtruth_data_list[case_idx]
+
+        # Destination for predictions. If not in new folder, predict in the same folder as the original image.
+        if output_directory is not None:
+            output_filepath = os.path.join(output_directory, case_output_name + '.nii.gz')
+        else:
+            output_filepath = os.path.join(case_folder, case_output_name + '.nii.gz')
+
+        # If prediction already exists, skip it. Useful if process is interrupted.
+        if os.path.exists(output_filepath) and not replace_existing:
+            continue
+
+        print case_folder
+        print 'Working on image.. ', case_idx, 'in', total_case_num
+
+        # Filename for output predictions. TODO: Make a more informative output for output_name == None
+        if output_name == None:
+            case_output_name = 'TESTCASE_' + str(case_idx).zfill(3) + '_PREDICT'
+        else:
+            case_output_name = output_name
+
+        # If prediction already exists, skip it. Useful if process is interrupted.
+        if os.path.exists(output_filepath) and not replace_existing:
+            continue
+
+        # Get data from hdf5
+        case_input_data, case_affine = read_image_files(input_data_filepaths, return_affine=True)
+        case_input_data = np.expand_dims(case_input_data, 0)
+
+        # Get groundtruth if provided.
+        if ground_truth_data_label is not None:
+            case_groundtruth_data = np.expand_dims(read_image_files(groundtruth_data_filepaths), 0)
+        else:
+            case_groundtruth_data = None
+
+        # Get the shape of the output either from input data, groundtruth, or pre-specification.
+        # if ground_truth_data_label is None and output_shape is None:
+        output_shape = list(case_input_data.shape)
+        output_shape[1] = 1
+        output_shape = tuple(output_shape)
+
+        output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
+
+        save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
+
+
+def predict_patches_one_image(input_data, patch_shape, model, output_shape, repetitions=16, model_batch_size=1):
 
     """ Presumes data is in the format (batch_size, channels, dims)
     """
@@ -110,19 +187,17 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape, repe
     # Should we automatically determine output_shape?
     output_data = np.zeros(output_shape)
 
-    repetition_offsets = np.linspace(0, min(patch_shape[-1], input_data.shape[-1] - patch_shape[-1]), repetitions, dtype=int)
-    repetition_offsets = np.unique(repetition_offsets)
-    repetitions = len(repetition_offsets)
-    
+    repetition_offsets = [np.linspace(0, patch_shape[x], repetitions, dtype=int) for x in xrange(len(patch_shape))]
     for rep_idx in xrange(repetitions):
 
         print 'PREDICTION PATCH GRID REPETITION # ..', rep_idx
 
-        offset_slice = [slice(None)]*2 + [slice(repetition_offsets[rep_idx], None, 1)] * (input_data.ndim - 2)
-        # print 'OFFSET SLICE,', offset_slice
+        offset_slice = [slice(min(repetition_offsets[axis][rep_idx], input_data.shape[axis+2]-patch_shape[axis]), None, 1) for axis in xrange(len(patch_shape))]
+        offset_slice = [slice(None)]*2 + offset_slice
         repatched_image = np.zeros_like(output_data[offset_slice])
-        # print repatched_image.shape
         corners_list = patchify_image(input_data[offset_slice], [input_data[offset_slice].shape[1]] + list(patch_shape))
+
+        print offset_slice
 
         for corner_list_idx in xrange(0, len(corners_list), model_batch_size):
 
@@ -147,9 +222,6 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
         TODO: Parse out the most logical division of prediction functions.
     """
 
-    output_metric_function = calculate_prediction_dice
-    output_metric = None
-
     # If no affine, create identity affine.
     if input_affine is None:
         input_affine = np.eye(4)
@@ -164,8 +236,7 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
         save_numpy_2_nifti(input_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-probability'))
         save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
         if ground_truth is not None:
-            output_metric = output_metric_function(binarized_output_data, ground_truth)
-            print 'DICE COEFFICIENT', output_metric
+            print 'DICE COEFFICIENT', calculate_prediction_dice(binarized_output_data, np.squeeze(ground_truth))
     
     # If multiple output modalities, either stack one on top of the other (e.g. output 3 over output 2 over output 1).
     # or output multiple volumes.
@@ -185,7 +256,7 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
             save_numpy_2_nifti(input_data[modality,...], reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-probability'))
             save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='_' + str(modality) + '-label'))
 
-    return output_metric
+    return
 
 def patchify_image(input_data, patch_shape, offset=(0,0,0,0), batch_dim=True, return_patches=False, mask_value = 0):
 
@@ -257,8 +328,6 @@ def insert_patch(input_data, patch, corner):
     patch_shape = patch.shape[1:]
 
     patch_slice = [slice(None)]*2 + [slice(corner_dim, corner_dim+patch_shape[idx], 1) for idx, corner_dim in enumerate(corner[1:])]
-    
-    # print patch.shape
 
     input_data[patch_slice] = patch
 
@@ -277,22 +346,20 @@ def calculate_prediction_msq(label_volume_1, label_volume_2):
 
 def calculate_prediction_dice(label_volume_1, label_volume_2):
 
-    label_volume_1, label_volume_2 = np.squeeze(label_volume_1), np.squeeze(label_volume_2)
-
     im1 = np.asarray(label_volume_1).astype(np.bool)
     im2 = np.asarray(label_volume_2).astype(np.bool)
 
     if im1.shape != im2.shape:
         raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
-    
-    smooth = 1
-    
-    im_sum = im1.sum() + im2.sum() + smooth
+
+    im_sum = im1.sum() + im2.sum()
+    if im_sum == 0:
+        return empty_score
 
     # Compute Dice coefficient
     intersection = np.logical_and(im1, im2)
 
-    return (2. * intersection.sum() + smooth) / im_sum
+    return 2. * intersection.sum() / im_sum
 
 if __name__ == '__main__':
     pass

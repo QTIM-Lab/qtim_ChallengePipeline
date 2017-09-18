@@ -87,7 +87,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
     if config["overwrite_training"]:
         
         # Get training and validation generators, either split randomly from the training data or from separate hdf5 files.
-        if config['validation_dir'] is not None and config['hdf5_validation'] is not None:
+        if config['validation_dir'] is None or config['hdf5_validation'] is None:
             validation_generator, num_validation_steps, open_validation_hdf5 = None, None, None
 
         elif os.path.exists(os.path.abspath(config["hdf5_validation"])):

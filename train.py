@@ -10,23 +10,11 @@ from keras.callbacks import ModelCheckpoint, CSVLogger, Callback, LearningRateSc
 from keras.utils import plot_model
 from keras.backend import clear_session
 
-import config_files.isles_config as isles_config
-import config_files.edema_config as edema_config
-import config_files.tumor1_config as tumor1_config
-import config_files.tumor2_config as tumor2_config
-import config_files.nonenhancing1_config as nonenhancing1_config
-import config_files.nonenhancing2_config as nonenhancing2_config
-import config_files.downsampled_edema_config as downsampled_edema_config
-import config_files.upsample_config as upsample_config
-#import config_files.upsample_preloaded_config as upsample_preloaded_config
-import config_files.old_edema_config as old_edema_config
-import config_files.fms_config as fms_config
-
 from model import n_net_3d, u_net_3d, split_u_net_3d, w_net_3d, load_old_model, vox_net, parellel_unet_3d
 from load_data import DataCollection
 from data_generator import get_data_generator, get_patch_data_generator
 from data_utils import pickle_dump, pickle_load
-from predict import model_predict_patches_hdf5
+from predict import model_predict_patches_hdf5, model_predict_patches_collection
 from augment import *
 from file_util import split_folder
 
@@ -236,56 +224,6 @@ def pipeline(config_name='', mode='default'):
             raise NotImplementedError("Config option '{}' not implemented!".format(mode))
         
         learning_pipeline(config=config_mode, overwrite=False)
-
-    else:
-        pass
-        # ISLES CONFIGURATION OPTIONS
-
-        # learning_pipeline(config=isles_config.default_config(), overwrite=False)
-        # learning_pipeline(config=isles_config.train_config(), overwrite=False)
-        # learning_pipeline(config=isles_config.predict_config(), overwrite=False)
-
-
-        # BRATS CONFIGURATION OPTIONS
-
-        # learning_pipeline(config=old_edema_config.predict_config(), overwrite=False)
-
-        # learning_pipeline(config=edema_config.default_config(), overwrite=False)
-        # learning_pipeline(config=edema_config.train_config(), overwrite=False)
-        # learning_pipeline(config=edema_config.predict_config(), overwrite=False)
-
-        # learning_pipeline(config=downsampled_edema_config.default_config(), overwrite=False)
-
-        # learning_pipeline(config=fms_config.test_config(), overwrite=False)
-        
-        # learning_pipeline(config=upsample_config.test_config(), overwrite=False)  
-        # learning_pipeline(config=upsample_preloaded_config.test_config(), overwrite=False)
-
-        # learning_pipeline(config=tumor1_config.train_config(), overwrite=False)
-        # learning_pipeline(config=nonenhancing1_config.default_config(), overwrite=False)
-        # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False)
-        # learning_pipeline(config=tumor2_config.train_data_config(), overwrite=False)
-        # learning_pipeline(config=tumor2_config.test_config(), overwrite=False)
-        # learning_pipeline(config=nonenhancing2_config.train_data_config(), overwrite=False)
-        # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False)
-        # learning_pipeline(config=upsample_config.train_data_config(), overwrite=False)
-
-        # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-        # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-        # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})    
-        # learning_pipeline(config=tumor2_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-        # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Train'})
-
-        # learning_pipeline(config=edema_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-        # learning_pipeline(config=tumor1_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-        # learning_pipeline(config=nonenhancing1_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})    
-        # learning_pipeline(config=tumor2_config.test_config(), overwrite=False, parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-        # learning_pipeline(config=nonenhancing2_config.test_config(), overwrite=False,  parameters={"test_dir": '/mnt/jk489/sharedfolder/BRATS2017/Validation'})
-
-        # split_folder('/mnt/jk489/sharedfolder/BRATS2017/Val', .2, ['/mnt/jk489/sharedfolder/BRATS2017/Val_Train', '/mnt/jk489/sharedfolder/BRATS2017/Val_Val'])
-        # learning_pipeline(config=reconciliation_config.train_config(), overwrite=False)
-        # learning_pipeline(config=reconciliation_config.test_config(), overwrite=False)
-
 
 if __name__ == '__main__':
 

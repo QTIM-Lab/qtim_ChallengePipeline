@@ -331,7 +331,9 @@ def parellel_unet_3d(input_shape=None, input_tensor=None, downsize_filters_facto
 
     return model
 
-def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, pool_size=(2, 2, 2), initial_learning_rate=0.00001, convolutions=4, dropout=.1, filter_shape=(3,3,3), num_outputs=1, deconvolution=True, regression=True, activation='relu', output_shape=None):
+def filter_test_u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, pool_size=(2, 2, 2), initial_learning_rate=0.00001, convolutions=4, dropout=.1, filter_shape=(3,3,3), first_filter_shape=(3,3,3), first_filter_num=64, num_outputs=1, deconvolution=True, regression=True, activation='relu', output_shape=None):
+
+    print first_filter_shape, first_filter_num
 
     # This is messy, as is the part at the conclusion.
     if input_tensor is None:
@@ -339,7 +341,7 @@ def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, poo
     else:
         inputs = input_tensor
 
-    conv1 = Conv3D(int(32/downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',
+    conv1 = Conv3D(first_filter_num, first_filter_shape, activation=activation, data_format='channels_first',
                    padding='same')(inputs)
     conv1 = Conv3D(int(64/downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',
                    padding='same')(conv1)
@@ -390,6 +392,87 @@ def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, poo
     conv7 = BatchNormalization()(conv7)
 
     conv8 = Conv3D(int(num_outputs), (1, 1, 1), data_format='channels_first',)(conv7)
+
+    # Messy
+    if input_tensor is not None:
+        return conv8
+
+    if regression:
+        # act = Activation('relu')(conv8)
+        model = Model(inputs=inputs, outputs=act)
+        model.compile(optimizer=Adam(lr=initial_learning_rate), loss=msq_loss, metrics=[msq_loss])
+    else:
+        if num_outputs == 1:
+            act = Activation('sigmoid')(conv8)
+            model = Model(inputs=inputs, outputs=act)
+            model.compile(optimizer=Nadam(lr=initial_learning_rate), loss=dice_coef_loss, metrics=[dice_coef])
+        else:
+            act = Activation('softmax')(conv8)
+            model = Model(inputs=inputs, outputs=act)
+            model.compile(optimizer=Nadam(lr=initial_learning_rate), loss='categorical_crossentropy',
+                          metrics=['categorical_accuracy'])
+
+    return model
+
+def u_net_3d(input_shape=None, input_tensor=None, downsize_filters_factor=1, pool_size=(2, 2, 2), initial_learning_rate=0.00001, convolutions=4, dropout=.1, filter_shape=(3,3,3), num_outputs=1, deconvolution=True, regression=True, activation='relu', output_shape=None):
+
+    # This is messy, as is the part at the conclusion.
+    if input_tensor is None:
+        inputs = Input(input_shape)
+    else:
+        inputs = input_tensor
+
+    conv1 = Conv3D(int(32/downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',
+                   padding='same')(inputs) #1
+    conv1 = Conv3D(int(64/downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',
+                   padding='same')(conv1) #2
+    conv1 = BatchNormalization()(conv1)     #3              
+    pool1 = MaxPooling3D(pool_size=pool_size, data_format='channels_first',)(conv1) #4
+
+    conv2 = Conv3D(int(64/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(pool1) #5
+    conv2 = Conv3D(int(128/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(conv2) #6
+    conv2 = BatchNormalization()(conv2) #7
+    pool2 = MaxPooling3D(pool_size=pool_size, data_format='channels_first')(conv2) #8
+
+    conv3 = Conv3D(int(128/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(pool2) #9
+    conv3 = Conv3D(int(256/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(conv3) #10
+    conv3 = BatchNormalization()(conv3) #11
+    pool3 = MaxPooling3D(pool_size=pool_size, data_format='channels_first')(conv3) #12
+
+    conv4 = Conv3D(int(256/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(pool3) #13
+    conv4 = Conv3D(int(512/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(conv4) #14
+    conv4 = BatchNormalization()(conv4) #15
+
+    up5 = get_upconv(pool_size=pool_size, deconvolution=deconvolution, depth=2, nb_filters=int(512/downsize_filters_factor), image_shape=input_shape[-3:])(conv4) #16
+    up5 = concatenate([up5, conv3], axis=1) #17
+    conv5 = Conv3D(int(256/downsize_filters_factor), (3, 3, 3), activation=activation, data_format='channels_first',padding='same')(up5) #18
+    conv5 = Conv3D(int(256/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(conv5) #19
+    conv5 = BatchNormalization()(conv5) #20
+
+    up6 = get_upconv(pool_size=pool_size, deconvolution=deconvolution, depth=1,
+                     nb_filters=int(256/downsize_filters_factor),image_shape=input_shape[-3:])(conv5) #21
+    up6 = concatenate([up6, conv2], axis=1) #22
+    conv6 = Conv3D(int(128/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first', padding='same')(up6) #23
+    conv6 = Conv3D(int(128/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(conv6) #24
+    conv6 = BatchNormalization()(conv6)   #25
+
+    up7 = get_upconv(pool_size=pool_size, deconvolution=deconvolution, depth=0,
+                     nb_filters=int(128/downsize_filters_factor), image_shape=input_shape[-3:])(conv6) #26
+    up7 = concatenate([up7, conv1], axis=1) #27
+    conv7 = Conv3D(int(64/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first', padding='same')(up7) #28
+    conv7 = Conv3D(int(64/downsize_filters_factor), (3, 3, 3), activation=activation,data_format='channels_first',
+                   padding='same')(conv7) #29
+    conv7 = BatchNormalization()(conv7) #30
+
+    conv8 = Conv3D(int(num_outputs), (1, 1, 1), data_format='channels_first',)(conv7) #31
 
     # Messy
     if input_tensor is not None:

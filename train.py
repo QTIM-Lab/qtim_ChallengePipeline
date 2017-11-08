@@ -1,5 +1,6 @@
 import tables
 import os
+import glob
 import math
 
 from time import gmtime, strftime
@@ -10,7 +11,7 @@ from keras.callbacks import ModelCheckpoint, CSVLogger, Callback, LearningRateSc
 from keras.utils import plot_model
 from keras.backend import clear_session
 
-from model import n_net_3d, u_net_3d, split_u_net_3d, w_net_3d, load_old_model, vox_net, parellel_unet_3d
+from model import n_net_3d, u_net_3d, split_u_net_3d, w_net_3d, load_old_model, vox_net, parellel_unet_3d, filter_test_u_net_3d
 from load_data import DataCollection
 from data_generator import get_data_generator, get_patch_data_generator
 from data_utils import pickle_dump, pickle_load
@@ -67,7 +68,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
         print 'Loading old model...'
         model = load_old_model(config["model_file"])
     else:
-        model = u_net_3d(input_shape=(len(modality_dict['input_modalities']),) + config['patch_shape'], output_shape=(len(modality_dict['ground_truth']),) + config['patch_shape'], downsize_filters_factor=config['downsize_filters_factor'], initial_learning_rate=config['initial_learning_rate'], regression=config['regression'], num_outputs=(len(modality_dict['ground_truth'])))
+        model = filter_test_u_net_3d(input_shape=(len(modality_dict['input_modalities']),) + config['patch_shape'], output_shape=(len(modality_dict['ground_truth']),) + config['patch_shape'], downsize_filters_factor=config['downsize_filters_factor'], initial_learning_rate=config['initial_learning_rate'], regression=config['regression'], num_outputs=(len(modality_dict['ground_truth'])), first_filter_shape=config['first_filter_shape'], first_filter_num=config['first_filter_num'])
 
     plot_model(model, to_file='model_image.png', show_shapes=True)
 
@@ -98,6 +99,7 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
         else:
             train_generator, num_train_steps = get_data_generator(open_train_hdf5, batch_size=config["training_batch_size"], data_labels = ['input_modalities', 'ground_truth'])
 
+        num_train_steps /= 10
         # Train model
         train_model(model=model, model_file=config["model_file"], training_generator=train_generator, validation_generator=validation_generator, steps_per_epoch=num_train_steps, validation_steps=num_validation_steps, initial_learning_rate=config["initial_learning_rate"], learning_rate_drop=config["learning_rate_drop"], learning_rate_epochs=config["decay_learning_rate_every_x_epochs"], n_epochs=config["n_epochs"])
 
@@ -126,11 +128,17 @@ def learning_pipeline(overwrite=False, delete=False, config=None, parameters=Non
             model_predict_patches_hdf5(data_file=open_test_hdf5, input_data_label=config['predictions_input'], patch_shape=config['patch_shape'], output_directory=config['predictions_folder'], output_name=config['predictions_name'], ground_truth_data_label=config['predictions_groundtruth'], model=model, replace_existing=config['predictions_replace_existing'], repetitions=config['prediction_repetitions'])
         else:
 
-            # This is a little tortuous -- fix up later.
-            testing_data_collection = DataCollection(config['test_dir'], modality_dict)
-            testing_data_collection.fill_data_groups()
+            for model in sorted(glob.glob('wholetumor_segnet*.h5')):
 
-            model_predict_patches_collection(data_collection=testing_data_collection, input_data_label=config['predictions_input'], patch_shape=config['patch_shape'], output_directory=config['predictions_folder'], output_name=config['predictions_name'], ground_truth_data_label=config['predictions_groundtruth'], model=model, replace_existing=config['predictions_replace_existing'], repetitions=config['prediction_repetitions'])
+                model_object = load_old_model(model)
+
+                # This is a little tortuous -- fix up later.
+                testing_data_collection = DataCollection(config['test_dir'], modality_dict)
+                testing_data_collection.fill_data_groups()
+
+                model_predict_patches_collection(data_collection=testing_data_collection, input_data_label=config['predictions_input'], patch_shape=config['patch_shape'], output_directory=config['predictions_folder'], output_name=os.path.basename(model)[0:-3] + '.nii.gz', ground_truth_data_label=config['predictions_groundtruth'], model=model_object, replace_existing=config['predictions_replace_existing'], repetitions=config['prediction_repetitions'])
+
+                # model_predict_patches_collection(data_collection=testing_data_collection, input_data_label=config['predictions_input'], patch_shape=config['patch_shape'], output_directory=config['predictions_folder'], output_name=config['predictions_name'], ground_truth_data_label=config['predictions_groundtruth'], model=model, replace_existing=config['predictions_replace_existing'], repetitions=config['prediction_repetitions'])
 
     clear_session()
 
@@ -172,7 +180,7 @@ def append_prefix_to_config(config, keys, prefix):
 def train_model(model, model_file, training_generator, validation_generator, steps_per_epoch, validation_steps, initial_learning_rate, learning_rate_drop, learning_rate_epochs, n_epochs):
 
     if validation_generator is None:
-        model.fit_generator(generator=training_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs, pickle_safe=True, callbacks=get_callbacks(model_file, initial_learning_rate=initial_learning_rate, learning_rate_drop=learning_rate_drop,learning_rate_epochs=learning_rate_epochs))
+        model.fit_generator(generator=training_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs, pickle_safe=True, callbacks=get_callbacks('wholetumor_segnet-{epoch:02d}-{loss:.2f}.h5', initial_learning_rate=initial_learning_rate, learning_rate_drop=learning_rate_drop,learning_rate_epochs=learning_rate_epochs))
     else:
         model.fit_generator(generator=training_generator, steps_per_epoch=steps_per_epoch, epochs=n_epochs, validation_data=validation_generator, validation_steps=validation_steps, pickle_safe=True, callbacks=get_callbacks(model_file, initial_learning_rate=initial_learning_rate, learning_rate_drop=learning_rate_drop,learning_rate_epochs=learning_rate_epochs))
 
@@ -197,7 +205,7 @@ def get_callbacks(model_file, initial_learning_rate, learning_rate_drop, learnin
     """ Currently do not understand callbacks.
     """
 
-    model_checkpoint = ModelCheckpoint(model_file, monitor="loss", save_best_only=True)
+    model_checkpoint = ModelCheckpoint(model_file, monitor="loss", save_best_only=False)
     logger = CSVLogger(os.path.join(logging_dir, "training.log"))
     history = SaveLossHistory()
     scheduler = LearningRateScheduler(partial(step_decay, initial_lrate=initial_learning_rate, drop=learning_rate_drop, epochs_drop=learning_rate_epochs))

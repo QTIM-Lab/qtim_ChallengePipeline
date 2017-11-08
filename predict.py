@@ -4,7 +4,7 @@ import os
 import nibabel as nib
 import numpy as np
 import tables
-
+from keras import backend as K
 from model import load_old_model
 from image_utils import save_numpy_2_nifti, nifti_2_numpy
 from file_util import replace_suffix, nifti_splitext
@@ -14,6 +14,8 @@ import multiprocessing
 from functools import partial
 
 from joblib import Parallel, delayed
+
+K.set_learning_phase(1)
 
 def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetitions=24, test_batch_size=200, ground_truth_data_label=None, output_shape=None, model=None, model_file=None, output_directory=None, output_name=None, replace_existing=True, merge_labels=True):
 
@@ -91,9 +93,12 @@ def model_predict_patches_hdf5(data_file, input_data_label, patch_shape, repetit
         elif output_shape is None:
             output_shape = case_groundtruth_data.shape
 
-        output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
+        for activations in [40,10,62]:
+            temp_filepath = replace_suffix(output_filepath, '', '_' + str(activations))
+            print temp_filepath
+            output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size, activation=activations)
 
-        save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
+            save_prediction(output_data, temp_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
 
     data_file.close()
 
@@ -174,20 +179,25 @@ def model_predict_patches_collection(data_collection, input_data_label, patch_sh
         output_shape[1] = 1
         output_shape = tuple(output_shape)
 
-        output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
+        output_data = predict_patches_one_image(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size, layer_output=None)
+
+        # save_prediction(output_data, temp_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
+
+        # output_data = write_prediction_to_npy(case_input_data, patch_shape, model, output_shape, repetitions=repetitions, model_batch_size=test_batch_size)
 
         save_prediction(output_data, output_filepath, input_affine=case_affine, ground_truth=case_groundtruth_data)
 
 
-def predict_patches_one_image(input_data, patch_shape, model, output_shape, repetitions=16, model_batch_size=1):
+def predict_patches_one_image(input_data, patch_shape, model, output_shape, repetitions=16, model_batch_size=200, layer_output=1, activation=0):
 
     """ Presumes data is in the format (batch_size, channels, dims)
     """
 
     # Should we automatically determine output_shape?
+    # output_shape = (output_shape[0], ) + (64, ) + output_shape[2:]
     output_data = np.zeros(output_shape)
 
-    repetition_offsets = [np.linspace(0, patch_shape[x], repetitions, dtype=int) for x in xrange(len(patch_shape))]
+    repetition_offsets = [np.linspace(0, patch_shape[x]-1, repetitions, dtype=int) for x in xrange(len(patch_shape))]
     for rep_idx in xrange(repetitions):
 
         print 'PREDICTION PATCH GRID REPETITION # ..', rep_idx
@@ -195,14 +205,14 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape, repe
         offset_slice = [slice(min(repetition_offsets[axis][rep_idx], input_data.shape[axis+2]-patch_shape[axis]), None, 1) for axis in xrange(len(patch_shape))]
         offset_slice = [slice(None)]*2 + offset_slice
         repatched_image = np.zeros_like(output_data[offset_slice])
-        corners_list = patchify_image(input_data[offset_slice], [input_data[offset_slice].shape[1]] + list(patch_shape))
 
-        print offset_slice
+        corners_list = patchify_image(input_data[offset_slice], [input_data[offset_slice].shape[1]] + list(patch_shape))
 
         for corner_list_idx in xrange(0, len(corners_list), model_batch_size):
 
             corner_batch = corners_list[corner_list_idx:corner_list_idx+model_batch_size]
             input_patches = grab_patch(input_data[offset_slice], corners_list[corner_list_idx:corner_list_idx+model_batch_size], patch_shape)
+
             prediction = model.predict(input_patches)
 
             for corner_idx, corner in enumerate(corner_batch):
@@ -215,6 +225,76 @@ def predict_patches_one_image(input_data, patch_shape, model, output_shape, repe
             output_data[offset_slice] = output_data[offset_slice] + (1.0 / (rep_idx)) * (repatched_image - output_data[offset_slice])
 
     return output_data
+
+def create_hdf5_file(hdf5_filepath, shape):
+
+    # Investigate hdf5 files.
+    hdf5_file = tables.open_file(hdf5_filepath, mode='w')
+
+    # Investigate this line.
+    # Compression levels = complevel. No compression = 0
+    # Compression library = Method of compresion.
+    filters = tables.Filters(complevel=5, complib='blosc')
+
+    data_storage = hdf5_file.create_earray(hdf5_file.root, 'data', tables.Float32Atom(), shape=data_shape, filters=filters, expectedrows=num_cases)
+
+    coordinate_storage = hdf5_file.create_earray(hdf5_file.root, '_'.join(['coordinates']), tables.Float32Atom(), shape=(0,3), filters=filters, expectedrows=num_cases)
+
+    return hdf5_file, data_storage, coordinate_storage
+
+def write_prediction_to_npy(input_data, patch_shape, model, output_shape, repetitions=16, model_batch_size=200, layer_output=14):
+
+    if layer_output is not None:
+        get_specific_layer_output = K.function([model.layers[0].input], [model.layers[layer_output].output])
+        output_prediction_data = None
+        output_coordinate_data = None
+
+    input_data[:,:,-patch_shape[0]/2:,...] = 0
+    input_data[:,:,:,-patch_shape[1]/2:,...] = 0
+    input_data[:,:,:,:,-patch_shape[2]/2:] = 0
+    input_data[:,:,:patch_shape[0]/2,...] = 0
+    input_data[:,:,:,:patch_shape[1]/2,...] = 0
+    input_data[:,:,:,:,:patch_shape[2]/2] = 0
+    non_zero_corners = np.nonzero(input_data)
+    print len(non_zero_corners)
+    print non_zero_corners[0]
+    non_zero_corners = np.array(non_zero_corners)[1:,:].T
+    print non_zero_corners.shape
+    np.random.shuffle(non_zero_corners)
+
+    # if True:
+    try:
+        for corner_idx in xrange(0, non_zero_corners.shape[0], model_batch_size):
+
+            corners_list = non_zero_corners[corner_idx:corner_idx+model_batch_size]
+            print corners_list.shape
+
+            # for corner in corners_list:
+            #     print corner
+            # print len(corners_list)
+            # print np.max(np.array(corners_list), axis=0)
+
+            input_patches = grab_patch(input_data, corners_list, patch_shape)
+
+            print input_patches.shape
+            prediction = get_specific_layer_output([input_patches])[0]
+            midpoints = np.array([[corner[1] + patch_shape[0]/2, corner[2]+ patch_shape[1]/2, corner[3] + patch_shape[2]/2]  for corner in corners_list])
+            if output_prediction_data is None:
+                output_prediction_data = prediction
+                output_coordinate_data = midpoints
+            else:
+                output_prediction_data = np.concatenate((output_prediction_data, prediction))
+                output_coordinate_data = np.concatenate((
+                    output_coordinate_data, midpoints))
+            print output_prediction_data.shape
+            print output_coordinate_data.shape
+    except:
+        pass
+
+    np.save('coords_array.npy', output_coordinate_data)
+    np.save('data_array.npy', output_prediction_data)
+
+    return
 
 def save_prediction(input_data, output_filepath, input_affine=None, ground_truth=None, stack_outputs=False, binarize_probability=.5):
 
@@ -234,9 +314,9 @@ def save_prediction(input_data, output_filepath, input_affine=None, ground_truth
         binarized_output_data = threshold_binarize(threshold=binarize_probability, input_data=input_data)
         print 'SUM OF ALL PREDICTION VOXELS', np.sum(binarized_output_data)
         save_numpy_2_nifti(input_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-probability'))
-        save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
-        if ground_truth is not None:
-            print 'DICE COEFFICIENT', calculate_prediction_dice(binarized_output_data, np.squeeze(ground_truth))
+        # save_numpy_2_nifti(binarized_output_data, reference_affine=input_affine, output_filepath=replace_suffix(output_filepath, input_suffix='', output_suffix='-label'))
+        # if ground_truth is not None:
+            # print 'DICE COEFFICIENT', calculate_prediction_dice(binarized_output_data, np.squeeze(ground_truth))
     
     # If multiple output modalities, either stack one on top of the other (e.g. output 3 over output 2 over output 1).
     # or output multiple volumes.
@@ -280,7 +360,12 @@ def patchify_image(input_data, patch_shape, offset=(0,0,0,0), batch_dim=True, re
     while not finished:
 
         # Wonky, fix in grab patch.
+        # print input_data.shape
+        # print corner
+        # print patch_shape
         patch = grab_patch(input_data, [corner], tuple(patch_shape[1:]))
+        # print patch.shape
+        # print '\n'
         if np.sum(patch != 0):
             if return_patches:
                 patch_list += [[corner[:], patch[:]]]
@@ -327,7 +412,13 @@ def insert_patch(input_data, patch, corner):
 
     patch_shape = patch.shape[1:]
 
+    # print input_data.shape
+    # print patch_shape
+    # print patch.shape
+    # print corner
     patch_slice = [slice(None)]*2 + [slice(corner_dim, corner_dim+patch_shape[idx], 1) for idx, corner_dim in enumerate(corner[1:])]
+    # print patch_slice
+    # print '\n'
 
     input_data[patch_slice] = patch
 

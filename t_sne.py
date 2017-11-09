@@ -1,8 +1,8 @@
 import os
 import glob
 
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
-# os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = '3'
 
 import scipy.ndimage as ndimage
 import numpy as np
@@ -15,8 +15,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
-# from keras import backend as K
-# from keras.models import load_model
+from keras import backend as K
+from keras.models import load_model
 
 from qtim_tools.qtim_utilities.format_util import convert_input_2_numpy
 from qtim_tools.qtim_utilities.nifti_util import save_numpy_2_nifti
@@ -58,9 +58,9 @@ def read_image_files(image_files, return_affine=False):
 
 def tsne_all_layers(model_file, patch_shape, input_data_filepaths=None, input_directory=None, mask_file=None, mask_labels=[1, 2, 3, 4, 5],layer_range = [5,15], specific_layers=[5,6,9,10,13,14], samples=40000, use_means='all', mode='AFFINE'):
 
-    # specific_layers = [1,2,4,5,7,8,9,11,14,15,18,19,22,23]
+    specific_layers = [1,2,4,5,7,8,10,11,14,15,18,19,22,23]
     # specific_layers = reversed(specific_layers)
-    specific_layers = [23]
+    # specific_layers = [23]
 
     if specific_layers is None:
         specific_layers = xrange(layer_range[0], layer_range[1])
@@ -68,13 +68,13 @@ def tsne_all_layers(model_file, patch_shape, input_data_filepaths=None, input_di
     for layer in specific_layers:
         get_tsne_label(input_data_filepaths, input_directory, model_file, patch_shape, mask_file, mask_labels, layer_output=layer, samples=samples, mode=mode, use_means=use_means)
 
-def get_tsne_label(input_data_filepaths, input_directory, model_file, patch_shape, mask_file, mask_labels, batch_size=200, output_directory=None, output_name=None, replace_existing=True, merge_labels=True, layer_output=14, samples=10000, use_means='mean', mode='AFFINE'):
+def get_tsne_label(input_data_filepaths, input_directory, model_file, patch_shape, mask_file, mask_labels, batch_size=400, output_directory=None, output_name=None, replace_existing=True, merge_labels=True, layer_output=14, samples=10000, use_means='mean', mode='AFFINE'):
 
     # Load model.
     if model_file is None:
         print 'Error. Please provide either a model object or a model filepath.'
 
-    # model = load_old_model(model_file)
+    model = load_old_model(model_file)
 
     if input_directory is None:
         # Get data from hdf5
@@ -87,12 +87,12 @@ def get_tsne_label(input_data_filepaths, input_directory, model_file, patch_shap
             hdf5.close()
 
     else:
-        # input_patches = os.path.join('anatomy_patches_' + str(samples) + '_' + mode + '.hdf5')
-        # if not os.path.exists(input_patches):
-            # gather_patches_from_patients(input_directory, input_patches, mask_file, mask_labels, samples, patch_shape, mode)
-        # if not os.path.exists('layer_' + str(layer_output) + '_' + mode + '_anatomy.hdf5') or True:
-            # write_prediction_to_npy_anatomy(input_patches, patch_shape, model, layer_output, samples=samples, model_batch_size=batch_size, mode=mode)
-        visualize_anatomy('layer_' + str(layer_output) + '_' + mode + '_anatomy.hdf5', use_means=use_means, layer=layer_output, mode=mode, mask_file=mask_file)
+        input_patches = os.path.join('anatomy_patches_' + str(samples) + '_' + mode + '.hdf5')
+        if not os.path.exists(input_patches) or True:
+            gather_patches_from_patients(input_directory, input_patches, mask_file, mask_labels, samples, patch_shape, mode)
+        if not os.path.exists('layer_' + str(layer_output) + '_' + mode + '_anatomy.hdf5') or True:
+            write_prediction_to_npy_anatomy(input_patches, patch_shape, model, layer_output, samples=samples, model_batch_size=batch_size, mode=mode)
+        # visualize_anatomy('layer_' + str(layer_output) + '_' + mode + '_anatomy.hdf5', use_means=use_means, layer=layer_output, mode=mode, mask_file=mask_file)
         # tsne_gradient_image(hdf5='layer_' + str(layer_output) + '_' + mode + '_anatomy.hdf5', use_means=use_means, layer=layer_output, mode=mode, mask_file=mask_file)
 
     # # visualize(output_prediction_data, output_coordinate_data, layer=layer_output,)
@@ -109,22 +109,29 @@ def gather_patches_from_patients(input_directory, output_filename, mask_file, ma
     casename_storage = hdf5_file.create_earray(hdf5_file.root, 'casenames', tables.StringAtom(256), shape=(0,1), filters=filters, expectedrows=samples)
 
     patients = glob.glob(os.path.join(input_directory, '*/'))
+    print patients
+    print os.path.join(input_directory, '*/')
 
     mask_array = np.expand_dims(np.expand_dims(convert_input_2_numpy(mask_file), 0), 0)
     mask_array = np.repeat(mask_array, 4, 1)
 
-    samples_per_patient = samples / len(patients)
+    samples_per_patient = int(samples / len(patients) * 1.5)
     samples_per_mask = samples_per_patient / len(mask_labels)
     print samples_per_mask
 
     for p in patients:
 
+        print p
+
         input_data_filepaths = []
         for file in ['FLAIR', 'T2', 'T1', 'T1POST']:
             input_data_filepaths += [os.path.join(p, mode + '_' + file + '.nii')]
 
-        print input_data_filepaths
         try:
+            input_labels = []
+            for file in ['TUMOR', 'NECROSIS', 'EDEMA']:
+                input_labels += [convert_input_2_numpy(os.path.join(p, mode + '_' + file + '.nii'))]
+
             case_input_data = read_image_files(input_data_filepaths)
             case_input_data = np.expand_dims(case_input_data, 0)
         except:
@@ -149,9 +156,23 @@ def gather_patches_from_patients(input_directory, output_filename, mask_file, ma
             corner = non_zero_corners[corner_idx]
             output_slice = [slice(None)]*2 + [slice(corner_dim-patch_shape[idx]/2, corner_dim+patch_shape[idx]/2, 1) for idx, corner_dim in enumerate(corner[1:])]
             data_storage.append(case_input_data[output_slice])
-            label_storage.append(mask_array[0,0,int(corner[1]), int(corner[2]), int(corner[3])].reshape(1,1))
             coordinate_storage.append(corner[1:].reshape(1,3))
             casename_storage.append(np.array(p)[np.newaxis][np.newaxis])
+
+            label_value = None
+            if input_labels[0][int(corner[1]), int(corner[2]), int(corner[3])] == 1:
+                label_value = np.array([6]).reshape(1,1)
+            if input_labels[1][int(corner[1]), int(corner[2]), int(corner[3])] == 1:
+                label_value = np.array([7]).reshape(1,1)
+            if input_labels[2][int(corner[1]), int(corner[2]), int(corner[3])] == 1:
+                label_value = np.array([8]).reshape(1,1)
+
+            if label_value is None:
+                label_value = mask_array[0,0,int(corner[1]), int(corner[2]), int(corner[3])].reshape(1,1)
+
+            print label_value
+
+            label_storage.append(label_value)
 
         # for m in mask_labels:
 
@@ -503,7 +524,7 @@ if __name__ == '__main__':
     input_files = ['FLAIR_pp.nii.gz', 'T2_pp.nii.gz', 'T1_pp.nii.gz', 'T1post_pp.nii.gz']
     input_files = [os.path.join('/mnt/jk489/sharedfolder/BRATS2017/Test_Case_2/Brats17_2013_24_1', file) for file in input_files]
 
-    model = '/home/abeers/Github/qtim_ChallengePipeline/model_files/brats_edema_pregenerated_.h5'
+    model = 'brats_edema_pregenerated_.h5'
 
     input_directory = '/mnt/jk489/sharedfolder/BRATS2017/Atlas_Registrations/5_labels'
     mask_file = '/mnt/jk489/sharedfolder/BRATS2017/Atlas_Registrations/5_labels/brain_atlas-label.nii.gz'
